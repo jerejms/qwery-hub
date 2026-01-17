@@ -1,5 +1,6 @@
 "use client";
 
+import { pickNextTask, RightNowTask } from "../lib/rightNow";
 import { useMemo, useState } from "react";
 import { postJSON } from "@/lib/api";
 import { parseNusmodsShareLink } from "@/lib/nusmods";
@@ -8,7 +9,12 @@ import { parseNusmodsShareLink } from "@/lib/nusmods";
 type Msg = { role: "user" | "assistant"; content: string };
 
 
+
 export default function Home() {
+  const [canvasTasks, setCanvasTasks] = useState<RightNowTask[]>([]);
+  const [scheduleTasks, setScheduleTasks] = useState<RightNowTask[]>([]);
+
+  const [currentTask, setCurrentTask] = useState<RightNowTask | null>(null);
   const [messages, setMessages] = useState<Msg[]>([
     { role: "assistant", content: "Hey! I’m your study buddy. What are we doing today?" },
   ]);
@@ -26,6 +32,71 @@ export default function Home() {
   const [loadingNext, setLoadingNext] = useState(false);
 
 
+  async function handlePrompt() {
+  setLoadingNext(true);
+
+  // 1️⃣ Collect tasks
+  const tasks = [...canvasTasks, ...scheduleTasks];
+
+  if (tasks.length === 0) {
+    setLoadingNext(false);
+    return;
+  }
+
+  // 2️⃣ Auto-prompt the AI (no UI input)
+  const aiPrompt = `
+You are a productivity assistant.
+
+Given the following tasks, choose EXACTLY ONE task the user should work on right now.
+
+Rules:
+- Choose the most urgent or important task
+- Prefer tasks with deadlines
+- Respond ONLY in JSON
+- No explanation text
+
+Tasks:
+${JSON.stringify(tasks, null, 2)}
+
+Return format:
+{
+  "id": string
+}
+`;
+
+  try {
+    const res = await postJSON<{ reply: string }>("/api/chat", {
+      messages: [{ role: "system", content: aiPrompt }],
+    });
+
+    // 3️⃣ Parse AI response
+    const parsed = JSON.parse(res.reply);
+    const chosen = tasks.find((t) => t.id === parsed.id);
+
+    // 4️⃣ Replace RIGHT NOW
+    if (chosen) {
+      setCurrentTask(chosen);
+    }
+  } catch (err) {
+    console.error("Failed to get AI task", err);
+  } finally {
+    setLoadingNext(false);
+  }
+}
+
+
+
+  async function handleFinish() {
+    setCurrentTask(null);
+    promptRightNow();
+  }
+
+  function handleSkip() {
+    handlePrompt();
+  }
+
+
+
   async function send() {
     if (!canSend) return;
 
@@ -41,6 +112,45 @@ export default function Home() {
         nusmodsShareLink: nusmodsShareLink || undefined,
       });
       setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
+    } catch (e: any) {
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: `Error: ${e.message}` },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  }
+  async function promptRightNow() {
+    if (sending) return;
+
+    const userPrompt = "Which task should I work on right now?";
+
+    // 1️⃣ Show the prompt in chat
+    setMessages((m) => [...m, { role: "user", content: userPrompt }]);
+    setSending(true);
+
+    try {
+      // 2️⃣ Ask the SAME AI assistant
+      const data = await postJSON<{ reply: string }>("/api/chat", {
+        message: userPrompt,
+        canvasToken: canvasToken || undefined,
+        nusmodsShareLink: nusmodsShareLink || undefined,
+      });
+
+      // 3️⃣ Show AI reply in chat
+      setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
+
+      // 4️⃣ Extract task from reply
+      const match = data.reply.match(/TASK:\s*(.+)/i);
+
+      if (match) {
+        setCurrentTask({
+          id: crypto.randomUUID(),
+          title: match[1],
+          source: "Canvas", // or "Schedule" if you want later
+        });
+      }
     } catch (e: any) {
       setMessages((m) => [
         ...m,
@@ -153,12 +263,46 @@ export default function Home() {
         <div className="mt-3 text-sm opacity-70">{syncStatus}</div>
 
         <div className="mt-4 space-y-3">
-          <div className="rounded-lg border border-white/10 p-3">
-            <div className="font-medium">Right Now</div>
-            <div className="text-sm opacity-60">
-              Shows what to do next (Canvas + Schedule)
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <button
+                onClick={promptRightNow}
+                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20"
+              >
+                Prompt
+              </button>
+
+              <button
+                onClick={handleFinish}
+                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20"
+                disabled={!currentTask}
+              >
+                Finish
+              </button>
+
+              <button
+                onClick={handleSkip}
+                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20"
+                disabled={!currentTask}
+              >
+                Skip
+              </button>
+            </div>
+
+            <div className="text-sm text-white/80">
+              {currentTask ? (
+                <>
+                  <div className="font-semibold">{currentTask.title}</div>
+                  <div className="text-xs opacity-70">
+                    Source: {currentTask.source}
+                  </div>
+                </>
+              ) : (
+                "RIGHT NOW"
+              )}
             </div>
           </div>
+
 
                     <div className="rounded-lg border border-white/10 p-3">
             <div className="flex items-center justify-between">
