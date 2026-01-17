@@ -8,6 +8,13 @@ import { Avatar } from "./components/Avatar";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
+// Safe UUID generator (prevents crypto.randomUUID crashes on older browsers)
+function safeUUID(): string {
+  const c = (globalThis as any)?.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function Home() {
   // ===== Kernel task pools =====
   const [canvasTasks, setCanvasTasks] = useState<RightNowTask[]>([]);
@@ -48,74 +55,169 @@ export default function Home() {
 
   // ===== Right Now =====
   const [loadingNext, setLoadingNext] = useState(false);
+  const [rightNowBusy, setRightNowBusy] = useState(false);
+
+
+  // TTS audio: prevent overlap + stale state flips
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioTokenRef = useRef(0);
+
+  function taskModuleCode(t?: RightNowTask | null): string | null {
+    if (!t) return null;
+
+    // common module code pattern e.g. CS2040C, MA1508E, EE2111A
+    const m1 = t.title.match(/\b[A-Z]{2,3}\d{4}[A-Z]?\b/);
+    if (m1) return m1[0];
+
+    const m2 = t.id.match(/\b[A-Z]{2,3}\d{4}[A-Z]?\b/);
+    if (m2) return m2[0];
+
+    return null;
+  }
 
   // ---------------------------
   // Fallback: if no Canvas assignments, study 30 min for a lecture module
   // ---------------------------
-  function buildFallbackStudyTask(): RightNowTask | null {
+  function buildFallbackStudyTaskVariant(args?: {
+    avoidSet?: Set<string>;
+    preferDifferentModuleThan?: string | null;
+    doneSet?: Set<string>;
+    skippedSet?: Set<string>;
+  }): RightNowTask | null {
     if (!upcomingClasses || upcomingClasses.length === 0) return null;
+
+    const avoidSet = args?.avoidSet ?? new Set<string>();
+    const doneSet = args?.doneSet ?? doneTaskIds;
+    const skippedSet = args?.skippedSet ?? skippedTaskIds;
+    const preferDiffFrom = args?.preferDifferentModuleThan ?? taskModuleCode(currentTask);
 
     const isLecture = (c: any) => {
       const lt = (c.lessonType ?? "").toString().toLowerCase();
       return lt.includes("lec") || lt.includes("lecture");
     };
 
-    const pickEarliest = (arr: any[]) => {
-      const sorted = [...arr].sort((a, b) => (a.startAtMs ?? 0) - (b.startAtMs ?? 0));
-      return sorted[0] ?? null;
-    };
+    const sorted = [...upcomingClasses].sort((a, b) => (a.startAtMs ?? 0) - (b.startAtMs ?? 0));
 
-    const lecture = pickEarliest(upcomingClasses.filter(isLecture));
-    const chosenClass = lecture ?? pickEarliest(upcomingClasses);
-    if (!chosenClass) return null;
+    // Prefer lecture, but also prefer not repeating same module if possible
+    const candidates = [
+      ...sorted.filter(isLecture),
+      ...sorted.filter((c) => !isLecture(c)),
+    ];
 
-    const moduleCode = chosenClass.moduleCode ?? "a module";
-    const startAtMs = chosenClass.startAtMs ?? undefined;
+    for (const c of candidates) {
+      const moduleCode = c.moduleCode ?? "a module";
+      const startAtMs = c.startAtMs ?? undefined;
+      const id = `study:${moduleCode}:${startAtMs ?? "na"}`;
 
-    return {
-      id: `study:${moduleCode}:${startAtMs ?? "na"}`,
-      title: `Study ${moduleCode} for 30 minutes`,
-      source: "schedule",
-      importance: 3,
-      estimatedHours: 0.5,
-      difficulty: 2,
-      dueAtMs: startAtMs,
-    };
+      if (doneSet.has(id) || skippedSet.has(id) || avoidSet.has(id)) continue;
+      if (preferDiffFrom && moduleCode === preferDiffFrom) {
+        // try other modules first
+        continue;
+      }
+
+      return {
+        id,
+        title: `Study ${moduleCode} for 30 minutes`,
+        source: "schedule",
+        importance: 3,
+        estimatedHours: 0.5,
+        difficulty: 2,
+        dueAtMs: startAtMs,
+      };
+    }
+
+    // If we couldn't avoid repeating module, allow repeat as last resort
+    for (const c of candidates) {
+      const moduleCode = c.moduleCode ?? "a module";
+      const startAtMs = c.startAtMs ?? undefined;
+      const id = `study:${moduleCode}:${startAtMs ?? "na"}`;
+
+      if (doneSet.has(id) || skippedSet.has(id) || avoidSet.has(id)) continue;
+
+      return {
+        id,
+        title: `Study ${moduleCode} for 30 minutes`,
+        source: "schedule",
+        importance: 3,
+        estimatedHours: 0.5,
+        difficulty: 2,
+        dueAtMs: startAtMs,
+      };
+    }
+
+    return null;
   }
+
 
   // ---------------------------
   // Choose next task deterministically with done/skip filtering + fallback
   // ---------------------------
-  function chooseNextTask(opts?: { avoidId?: string }) {
+  function chooseNextTask(opts?: {
+    avoidId?: string;
+    doneOverride?: Set<string>;
+    skippedOverride?: Set<string>;
+    preferDifferentModuleThan?: string | null;
+  }): RightNowTask | null {
     const avoidId = opts?.avoidId;
+    const doneSet = opts?.doneOverride ?? doneTaskIds;
+    const skippedSet = opts?.skippedOverride ?? skippedTaskIds;
+    const preferDiffFrom = opts?.preferDifferentModuleThan ?? taskModuleCode(currentTask);
 
-    // always remove done
-    const canvas = canvasTasks.filter((t) => !doneTaskIds.has(t.id));
-    const sched = scheduleTasks.filter((t) => !doneTaskIds.has(t.id));
-
-    // avoid current + skipped
     const avoidSet = new Set<string>();
     if (avoidId) avoidSet.add(avoidId);
-    for (const id of skippedTaskIds) avoidSet.add(id);
+    for (const id of skippedSet) avoidSet.add(id);
 
-    let canvas2 = canvas.filter((t) => !avoidSet.has(t.id));
-    let sched2 = sched.filter((t) => !avoidSet.has(t.id));
+    const canvas = canvasTasks.filter((t) => !doneSet.has(t.id) && !avoidSet.has(t.id));
+    const sched = scheduleTasks.filter((t) => !doneSet.has(t.id) && !avoidSet.has(t.id));
 
-    // if everything got skipped, clear skips (not done) and try again
-    if (canvas2.length === 0 && sched2.length === 0) {
-      canvas2 = canvas;
-      sched2 = sched;
-      if (skippedTaskIds.size > 0) setSkippedTaskIds(new Set());
+    // Try not to repeat the same module if possible
+    const canvasAlt = preferDiffFrom ? canvas.filter((t) => taskModuleCode(t) !== preferDiffFrom) : canvas;
+    const schedAlt = preferDiffFrom ? sched.filter((t) => taskModuleCode(t) !== preferDiffFrom) : sched;
+
+    const alt = pickNextTask(canvasAlt, schedAlt);
+    if (alt) return alt;
+
+    const normal = pickNextTask(canvas, sched);
+    if (normal) return normal;
+
+    // fallback: build 30-min study task from upcoming classes, but avoid repeating module if possible
+    const fallbackCandidates = [...(upcomingClasses ?? [])].sort(
+      (a, b) => (a.startAtMs ?? 0) - (b.startAtMs ?? 0)
+    );
+
+    const makeFallback = (c: any) => {
+      const moduleCode = c.moduleCode ?? "a module";
+      const startAtMs = c.startAtMs ?? undefined;
+      const id = `study:${moduleCode}:${startAtMs ?? "na"}`;
+      return {
+        id,
+        title: `Study ${moduleCode} for 30 minutes`,
+        source: "schedule" as const,
+        importance: 3,
+        estimatedHours: 0.5,
+        difficulty: 2,
+        dueAtMs: startAtMs,
+      } satisfies RightNowTask;
+    };
+
+    for (const c of fallbackCandidates) {
+      const mod = c.moduleCode ?? null;
+      const fb = makeFallback(c);
+      if (doneSet.has(fb.id) || skippedSet.has(fb.id) || avoidSet.has(fb.id)) continue;
+      if (preferDiffFrom && mod === preferDiffFrom) continue;
+      return fb;
     }
 
-    // if no Canvas assignments left, fallback to 30-min lecture study
-    if (canvas2.length === 0) {
-      const fallback = buildFallbackStudyTask();
-      if (fallback) return fallback;
+    for (const c of fallbackCandidates) {
+      const fb = makeFallback(c);
+      if (doneSet.has(fb.id) || skippedSet.has(fb.id) || avoidSet.has(fb.id)) continue;
+      return fb;
     }
 
-    return pickNextTask(canvas2, sched2);
+    return null;
   }
+
+
 
   // ---------------------------
   // Helper: Send message to LLM
@@ -141,15 +243,30 @@ export default function Home() {
       setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
 
       if (useTTS && data.audioUrl) {
-        const audio = new Audio(data.audioUrl);
+        // Invalidate previous audio callbacks
+        const token = ++audioTokenRef.current;
 
-        // Track audio playback state for avatar animation
-        audio.onplay = () => setIsAudioPlaying(true);
-        audio.onended = () => setIsAudioPlaying(false);
-        audio.onerror = () => setIsAudioPlaying(false);
+        // Stop previous audio if any
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.currentTime = 0;
+        }
+
+        const audio = new Audio(data.audioUrl);
+        audioRef.current = audio;
+
+        audio.onplay = () => {
+          if (audioTokenRef.current === token) setIsAudioPlaying(true);
+        };
+        audio.onended = () => {
+          if (audioTokenRef.current === token) setIsAudioPlaying(false);
+        };
+        audio.onerror = () => {
+          if (audioTokenRef.current === token) setIsAudioPlaying(false);
+        };
 
         audio.play().catch(() => {
-          setIsAudioPlaying(false);
+          if (audioTokenRef.current === token) setIsAudioPlaying(false);
         });
       }
 
@@ -167,12 +284,13 @@ export default function Home() {
   // Right Now: Prompt / Finish / Skip
   // ---------------------------
   async function promptRightNow() {
+    if (rightNowBusy || sending) return;
+    setRightNowBusy(true);
     setLoadingNext(true);
     try {
       const chosen = chooseNextTask();
       setCurrentTask(chosen);
 
-      // Build context for LLM
       const context = {
         action: "prompt_task",
         currentTask: chosen,
@@ -185,65 +303,76 @@ export default function Home() {
       await sendToLLM("What should I work on right now?", context);
     } finally {
       setLoadingNext(false);
+      setRightNowBusy(false);
     }
   }
 
+
   async function handleFinish() {
-    if (!currentTask) return;
+    if (!currentTask || rightNowBusy || sending) return;
+    setRightNowBusy(true);
+    try {
+      const finished = currentTask;
 
-    const finished = currentTask;
+      const nextDone = new Set(doneTaskIds);
+      nextDone.add(finished.id);
+      setDoneTaskIds(nextDone);
 
-    // mark done
-    setDoneTaskIds((prev) => {
-      const next = new Set(prev);
-      next.add(finished.id);
-      return next;
-    });
+      const nextTask = chooseNextTask({
+        avoidId: finished.id,
+        doneOverride: nextDone,
+        preferDifferentModuleThan: taskModuleCode(finished),
+      });
+      setCurrentTask(nextTask);
 
-    const nextTask = chooseNextTask({ avoidId: finished.id });
-    setCurrentTask(nextTask);
+      const context = {
+        action: "finish_task",
+        finishedTask: finished,
+        nextTask,
+        remainingTasks: {
+          canvas: canvasTasks.filter((t) => !nextDone.has(t.id)).length,
+          schedule: scheduleTasks.filter((t) => !nextDone.has(t.id)).length,
+        },
+      };
 
-    // Build context for LLM
-    const context = {
-      action: "finish_task",
-      finishedTask: finished,
-      nextTask: nextTask,
-      remainingTasks: {
-        canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id) && t.id !== finished.id).length,
-        schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id) && t.id !== finished.id).length,
-      },
-    };
-
-    await sendToLLM(`I just finished: ${finished.title}`, context);
+      await sendToLLM(`I just finished: ${finished.title}`, context);
+    } finally {
+      setRightNowBusy(false);
+    }
   }
 
+
   async function handleSkip() {
-    if (!currentTask) return;
+    if (!currentTask || rightNowBusy || sending) return;
+    setRightNowBusy(true);
+    try {
+      const skipped = currentTask;
 
-    const skipped = currentTask;
+      const nextSkipped = new Set(skippedTaskIds);
+      nextSkipped.add(skipped.id);
+      setSkippedTaskIds(nextSkipped);
 
-    // mark skipped
-    setSkippedTaskIds((prev) => {
-      const next = new Set(prev);
-      next.add(skipped.id);
-      return next;
-    });
+      const nextTask = chooseNextTask({
+        avoidId: skipped.id,
+        skippedOverride: nextSkipped,
+        preferDifferentModuleThan: taskModuleCode(skipped),
+      });
+      setCurrentTask(nextTask);
 
-    const nextTask = chooseNextTask({ avoidId: skipped.id });
-    setCurrentTask(nextTask);
+      const context = {
+        action: "skip_task",
+        skippedTask: skipped,
+        nextTask,
+        availableTasks: {
+          canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id) && !nextSkipped.has(t.id)).length,
+          schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id) && !nextSkipped.has(t.id)).length,
+        },
+      };
 
-    // Build context for LLM
-    const context = {
-      action: "skip_task",
-      skippedTask: skipped,
-      nextTask: nextTask,
-      availableTasks: {
-        canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id) && !skippedTaskIds.has(t.id) && t.id !== skipped.id).length,
-        schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id) && !skippedTaskIds.has(t.id) && t.id !== skipped.id).length,
-      },
-    };
-
-    await sendToLLM(`I want to skip: ${skipped.title}`, context);
+      await sendToLLM(`I want to skip: ${skipped.title}`, context);
+    } finally {
+      setRightNowBusy(false);
+    }
   }
 
 
@@ -256,7 +385,6 @@ export default function Home() {
     const text = input.trim();
     setInput("");
 
-    // Send to LLM with current task context
     const context = {
       currentTask: currentTask,
       availableTasks: {
@@ -296,9 +424,9 @@ export default function Home() {
 
       setSyncStatus(`Synced ✅ Canvas tasks: ${data.tasksCount}, Modules: ${data.modulesCount}`);
 
-      // Canvas assignments -> RightNowTask
+      // Canvas assignments -> RightNowTask (safeUUID prevents crypto.randomUUID crashes)
       const ct: RightNowTask[] = (data.assignments ?? []).map((a: any) => ({
-        id: `canvas:${a.id ?? a.title ?? crypto.randomUUID()}`,
+        id: `canvas:${a.id ?? a.title ?? safeUUID()}`,
         title: a.title ?? a.name ?? "Canvas task",
         source: "canvas" as const,
         importance: 5,
@@ -346,7 +474,9 @@ export default function Home() {
 
       // Upcoming classes -> prep tasks
       const st: RightNowTask[] = items.map((c: any, idx: number) => ({
-        id: `schedule:${c.moduleCode ?? idx}:${c.lessonType ?? ""}:${c.classNo ?? ""}`,
+        id: `schedule:${c.moduleCode ?? idx}:${c.lessonType ?? ""}:${c.classNo ?? ""}:${
+          c.startAtMs ?? idx
+        }`,
         title: `Prep: ${c.moduleCode} ${c.lessonType} (${c.classNo})`,
         source: "schedule" as const,
         importance: 2,
@@ -387,17 +517,17 @@ export default function Home() {
           {/* Debug: Manual test button */}
           <button
             onClick={() => {
-              console.log('🧪 Manual toggle: isAudioPlaying', !isAudioPlaying);
+              console.log("🧪 Manual toggle: isAudioPlaying", !isAudioPlaying);
               setIsAudioPlaying(!isAudioPlaying);
             }}
             className="absolute bottom-4 right-4 px-3 py-1 bg-white/10 rounded text-xs hover:bg-white/20 z-50"
           >
-            Test Avatar: {isAudioPlaying ? 'Talking' : 'Idle'}
+            Test Avatar: {isAudioPlaying ? "Talking" : "Idle"}
           </button>
         </div>
 
         {/* Chat messages container */}
-        <div className="h-[40vh] rounded-lg border border-white/10 p-3 overflow-auto space-y-3">
+        <div className="h-[40vh] rounded-lg border border-white/10 p-3 overflow-auto space-y-3 mb-2">
           {messages.map((m, i) => (
             <div
               key={i}
@@ -426,21 +556,26 @@ export default function Home() {
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex gap-2 sticky bottom-0 bg-black pt-2 pb-2">
           <input
             className="flex-1 rounded-lg border border-white/10 bg-transparent px-3 py-2 outline-none"
             placeholder="Ask your study buddy..."
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && send()}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              if ((e.nativeEvent as any).isComposing) return;
+              send();
+            }}
           />
 
           <button
-            className={`rounded-lg border border-white/10 px-3 py-2 hover:bg-white/10 ${useTTS ? "bg-white/10" : ""
-              }`}
+            className={`rounded-lg border border-white/10 px-3 py-2 hover:bg-white/10 ${
+              useTTS ? "bg-white/10" : ""
+            }`}
             onClick={() => {
               const newState = !useTTS;
-              console.log('🔊 TTS button clicked, new state:', newState);
+              console.log("🔊 TTS button clicked, new state:", newState);
               setUseTTS(newState);
             }}
             title="Enable text-to-speech"
@@ -585,7 +720,9 @@ export default function Home() {
               </div>
 
               <div className="text-xs opacity-60 pt-2">
-                After syncing, click <span className="font-semibold">Prompt</span>. Finish marks tasks as done; Skip gives another task. If no Canvas tasks, you’ll get a 30-min lecture study task.
+                After syncing, click <span className="font-semibold">Prompt</span>. Finish marks
+                tasks as done; Skip gives another task. If no Canvas tasks, you’ll get a 30-min
+                lecture study task.
               </div>
             </div>
           </div>

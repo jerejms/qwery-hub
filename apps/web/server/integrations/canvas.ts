@@ -30,7 +30,7 @@ export async function fetchCanvasAssignments(canvasToken: string): Promise<Canva
       title: item.assignment?.name || item.title || 'Untitled Assignment',
       moduleCode: item.course?.code || item.course?.name || item.context_name || item.course_code || "",
       dueDate: item.assignment?.due_at || item.due_at || null,
-      completed: item.complete_at != null,
+      completed: false,
       url: item.assignment?.html_url || item.html_url || null,
     }));
 }

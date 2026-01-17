@@ -1,41 +1,30 @@
+// apps/web/app/api/schedule/next/route.ts
 import { NextResponse } from "next/server";
-import {
-  parseNusmodsShareLink,
-  fetchNusmodsModule,
-  pickSemester,
-} from "@/server/integrations/nusmods";
+import { getTimetableFromShareLink } from "@/server/integrations/nusmods";
 
 const DAY_TO_INDEX: Record<string, number> = {
+  Sunday: 0,
   Monday: 1,
   Tuesday: 2,
   Wednesday: 3,
   Thursday: 4,
   Friday: 5,
   Saturday: 6,
-  Sunday: 0,
 };
 
-const SHORT_TO_FULL: Record<string, string> = {
-  LEC: "Lecture",
-  TUT: "Tutorial",
-  LAB: "Laboratory",
-  REC: "Recitation",
-  SEM: "Seminar",
-  SEC: "Sectional Teaching",
-};
-
-// Convert "1400" -> minutes since midnight
 function hhmmToMinutes(hhmm: string) {
   const h = parseInt(hhmm.slice(0, 2), 10);
   const m = parseInt(hhmm.slice(2), 10);
   return h * 60 + m;
 }
 
-// Get next occurrence Date for a given weekday + time (in Singapore local time)
-function nextOccurrence(day: string, startTime: string) {
+function getSingaporeNow() {
   const now = new Date();
-  // Singapore time: easiest hackathon approach:
-  const sgNow = new Date(now.toLocaleString("en-SG", { timeZone: "Asia/Singapore" }));
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000;
+  return new Date(utcMs + 8 * 60 * 60_000);
+}
+
+function nextOccurrenceFrom(sgNow: Date, day: string, startTime: string) {
   const targetDow = DAY_TO_INDEX[day];
   if (targetDow === undefined) return null;
 
@@ -44,7 +33,7 @@ function nextOccurrence(day: string, startTime: string) {
   const nowMin = sgNow.getHours() * 60 + sgNow.getMinutes();
 
   let deltaDays = (targetDow - sgDow + 7) % 7;
-  if (deltaDays === 0 && startMin <= nowMin) deltaDays = 7; // if today but already passed, go next week
+  if (deltaDays === 0 && startMin <= nowMin) deltaDays = 7;
 
   const d = new Date(sgNow);
   d.setDate(sgNow.getDate() + deltaDays);
@@ -53,53 +42,49 @@ function nextOccurrence(day: string, startTime: string) {
 }
 
 export async function POST(req: Request) {
-  const { nusmodsShareLink, semester = 2 } = await req.json();
+  try {
+    const { nusmodsShareLink, semester = 2, days = 7 } = await req.json();
 
-  if (!nusmodsShareLink) {
-    return NextResponse.json({ error: "Missing nusmodsShareLink" }, { status: 400 });
-  }
-
-  const selections = parseNusmodsShareLink(nusmodsShareLink);
-
-  // Fetch all module JSON in parallel
-  const moduleCodes = [...new Set(selections.map((s) => s.moduleCode))];
-  const modules = await Promise.all(moduleCodes.map((c) => fetchNusmodsModule(c)));
-
-  // Build candidate lessons from selected class slots only
-  const candidates: any[] = [];
-
-  for (const sel of selections) {
-    const modJson = modules.find((m: any) => m.moduleCode === sel.moduleCode) ?? null;
-    if (!modJson) continue;
-
-    const sem = pickSemester(modJson, semester);
-    const tt = sem?.timetable;
-    if (!Array.isArray(tt)) continue;
-
-    for (const slot of tt) {
-      // Match selected class
-      if (slot.lessonType !== sel.lessonTypeShort) continue;
-      if (String(slot.classNo) !== String(sel.classNo)) continue;
-
-      const startAt = nextOccurrence(slot.day, slot.startTime);
-      if (!startAt) continue;
-
-      candidates.push({
-        moduleCode: sel.moduleCode,
-        lessonType: slot.lessonType,
-        classNo: slot.classNo,
-        day: slot.day,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        venue: slot.venue ?? null,
-        startAt: startAt.toISOString(),
-        startAtMs: startAt.getTime(),
-      });
+    if (!nusmodsShareLink) {
+      return NextResponse.json({ error: "Missing nusmodsShareLink" }, { status: 400 });
     }
+
+    const modules = await getTimetableFromShareLink(nusmodsShareLink, semester);
+
+    const sgNow = getSingaporeNow();
+    const windowEnd = new Date(sgNow);
+    windowEnd.setDate(sgNow.getDate() + Number(days));
+    const windowEndMs = windowEnd.getTime();
+
+    let best: any = null;
+
+    for (const mod of modules) {
+      for (const lesson of mod.lessons ?? []) {
+        const startAt = nextOccurrenceFrom(sgNow, lesson.day, lesson.startTime);
+        if (!startAt) continue;
+
+        const startAtMs = startAt.getTime();
+        if (startAtMs < sgNow.getTime() || startAtMs > windowEndMs) continue;
+
+        const candidate = {
+          moduleCode: mod.moduleCode,
+          lessonType: lesson.lessonTypeFull,
+          lessonTypeShort: lesson.lessonTypeShort,
+          classNo: lesson.classNo,
+          day: lesson.day,
+          startTime: lesson.startTime,
+          endTime: lesson.endTime,
+          venue: lesson.venue,
+          startAt: startAt.toISOString(),
+          startAtMs,
+        };
+
+        if (!best || candidate.startAtMs < best.startAtMs) best = candidate;
+      }
+    }
+
+    return NextResponse.json({ next: best });
+  } catch (err: any) {
+    return NextResponse.json({ error: err?.message ?? String(err) }, { status: 500 });
   }
-
-  candidates.sort((a, b) => a.startAtMs - b.startAtMs);
-
-  const next = candidates[0] ?? null;
-  return NextResponse.json({ next });
 }
