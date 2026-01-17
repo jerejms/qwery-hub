@@ -1,10 +1,18 @@
 "use client";
 
+<<<<<<< Updated upstream
 import { pickNextTask, RightNowTask } from "../lib/rightNow";
 import { useMemo, useState } from "react";
 import { postJSON } from "@/lib/api";
 import { parseNusmodsShareLink } from "@/lib/nusmods";
 
+=======
+import { useEffect, useMemo, useRef, useState } from "react";
+import { postJSON } from "@/lib/api";
+import { parseNusmodsShareLink } from "@/lib/nusmods";
+import { pickNextTask, RightNowTask } from "@/lib/rightNow";
+import { Avatar } from "./components/Avatar";
+>>>>>>> Stashed changes
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -21,6 +29,14 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [useTTS, setUseTTS] = useState(false);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+
+  // Auto-scroll to bottom of chat
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   const [connectOpen, setConnectOpen] = useState(false);
   const [canvasToken, setCanvasToken] = useState("");
@@ -97,6 +113,62 @@ Return format:
     handlePrompt();
   }
 
+<<<<<<< Updated upstream
+=======
+  function handleFinish() {
+    if (!currentTask) return;
+
+    const finished = currentTask;
+
+    // mark done
+    setDoneTaskIds((prev) => {
+      const next = new Set(prev);
+      next.add(finished.id);
+      return next;
+    });
+
+    const nextTask = chooseNextTask({ avoidId: finished.id });
+    setCurrentTask(nextTask);
+
+    setMessages((m) => [
+      ...m,
+      { role: "user", content: `✅ Finished: ${finished.title}` },
+      { role: "assistant", content: `✅ Done: ${finished.title}` },
+      ...(nextTask
+        ? [{ role: "assistant" as const, content: `Next: ${nextTask.title} (source: ${nextTask.source})` }]
+        : [{ role: "assistant" as const, content: "No next task right now — sync or add tasks." }]),
+    ]);
+  }
+
+  function handleSkip() {
+    if (!currentTask) return;
+
+    const skipped = currentTask;
+
+    // mark skipped
+    setSkippedTaskIds((prev) => {
+      const next = new Set(prev);
+      next.add(skipped.id);
+      return next;
+    });
+
+    const nextTask = chooseNextTask({ avoidId: skipped.id });
+    setCurrentTask(nextTask);
+
+    setMessages((m) => [
+      ...m,
+      { role: "user", content: `⏭️ Skip: ${skipped.title}` },
+      ...(nextTask
+        ? [
+          {
+            role: "assistant" as const,
+            content: `⏭️ Skipped. Try this instead: ${nextTask.title} (source: ${nextTask.source})`,
+          },
+        ]
+        : [{ role: "assistant" as const, content: "Nothing else to suggest yet — sync first." }]),
+    ]);
+  }
+>>>>>>> Stashed changes
 
 
   async function send() {
@@ -129,6 +201,7 @@ Return format:
         console.log('Playing TTS audio, URL length:', data.audioUrl.length);
         const audio = new Audio(data.audioUrl);
 
+<<<<<<< Updated upstream
         audio.addEventListener('error', (e) => {
           console.error('Audio playback error:', e);
           console.error('Audio element error details:', audio.error);
@@ -145,6 +218,16 @@ Return format:
         });
       } else if (useTTS && !data.audioUrl) {
         console.warn('TTS was requested but no audioUrl was returned');
+=======
+        // Track audio playback state for avatar animation
+        audio.onplay = () => setIsAudioPlaying(true);
+        audio.onended = () => setIsAudioPlaying(false);
+        audio.onerror = () => setIsAudioPlaying(false);
+
+        audio.play().catch(() => {
+          setIsAudioPlaying(false);
+        });
+>>>>>>> Stashed changes
       }
     } catch (e: any) {
       setMessages((m) => [
@@ -249,7 +332,7 @@ Return format:
   return (
     <div className="min-h-screen flex bg-black text-white">
       {/* LEFT: CHAT */}
-      <main className="flex-1 p-4 border-r border-white/10">
+      <main className="flex-1 p-4 border-r border-white/10 flex flex-col">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">qwery-hub</h1>
           <button
@@ -260,7 +343,13 @@ Return format:
           </button>
         </div>
 
-        <div className="mt-4 h-[70vh] rounded-lg border border-white/10 p-3 overflow-auto space-y-3">
+        {/* Avatar/Image at the top */}
+        <div className="flex-1 relative overflow-hidden mt-4">
+          <Avatar isTalking={isAudioPlaying} />
+        </div>
+
+        {/* Chat messages container */}
+        <div className="h-[40vh] rounded-lg border border-white/10 p-3 overflow-auto space-y-3">
           {messages.map((m, i) => (
             <div
               key={i}
@@ -290,6 +379,7 @@ Return format:
               </div>
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
         <div className="mt-4 flex gap-2">
@@ -410,29 +500,31 @@ Return format:
         </div>
       </aside>
 
-      {/* CONNECT MODAL */}
+
+      {/* CONNECT MODAL: Added z-[100] to be on top of EVERYTHING */}
       {connectOpen && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4">
-          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-black p-4">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[100]">
+          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-black p-4 relative z-[110]">
             <div className="flex items-center justify-between">
               <div className="text-lg font-semibold">Connect data sources</div>
-              <button onClick={() => setConnectOpen(false)}>✕</button>
+              <button onClick={() => setConnectOpen(false)} className="hover:text-white/70">✕</button>
             </div>
 
             <div className="mt-4 space-y-3">
-              <label>
+              <label className="block">
                 <div className="text-sm opacity-70">Canvas token</div>
                 <input
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-transparent px-3 py-2"
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 outline-none focus:border-white/30"
                   value={canvasToken}
                   onChange={(e) => setCanvasToken(e.target.value)}
+                  placeholder="Paste your token here"
                 />
               </label>
 
-              <label>
+              <label className="block">
                 <div className="text-sm opacity-70">NUSMods Share/Sync link</div>
                 <input
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-transparent px-3 py-2"
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 outline-none focus:border-white/30"
                   placeholder="Paste your NUSMods Share/Sync link here"
                   value={nusmodsShareLink}
                   onChange={(e) => setNusmodsShareLink(e.target.value)}
@@ -441,8 +533,27 @@ Return format:
 
 
               <div className="flex justify-end gap-2 pt-2">
+<<<<<<< Updated upstream
                 <button onClick={() => setConnectOpen(false)}>Cancel</button>
                 <button onClick={sync}>Sync</button>
+=======
+                <button
+                  className="px-4 py-2 hover:opacity-70 transition-opacity"
+                  onClick={() => setConnectOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded bg-white/10 px-4 py-2 hover:bg-white/20 transition-colors border border-white/10"
+                  onClick={sync}
+                >
+                  Sync
+                </button>
+              </div>
+
+              <div className="text-xs opacity-60 pt-2 border-t border-white/5 mt-2">
+                After syncing, click <span className="font-semibold text-white">Prompt</span>. Finish marks tasks as done; Skip gives another task.
+>>>>>>> Stashed changes
               </div>
             </div>
           </div>
