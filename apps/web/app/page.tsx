@@ -9,6 +9,7 @@ import { Avatar } from "./components/Avatar";
 type Msg = { role: "user" | "assistant"; content: string };
 
 export default function Home() {
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [canvasTasks, setCanvasTasks] = useState<RightNowTask[]>([]);
   const [scheduleTasks, setScheduleTasks] = useState<RightNowTask[]>([]);
   const [doneTaskIds, setDoneTaskIds] = useState<Set<string>>(new Set());
@@ -299,7 +300,13 @@ export default function Home() {
       setLoadingSchedule(false);
     }
   }
+  const themeClasses = theme === 'dark' 
+    ? "bg-[#0a0a0a] text-white border-white/10" 
+    : "bg-white text-slate-900 border-slate-200";
 
+  const cardClasses = theme === 'dark'
+    ? "bg-white/[0.03] border-white/10"
+    : "bg-slate-50 border-slate-200 shadow-sm";
   return (
     <div className="min-h-screen flex bg-black text-white">
       {/* LEFT: CHAT */}
