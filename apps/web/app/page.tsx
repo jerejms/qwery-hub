@@ -172,11 +172,11 @@ export default function Home() {
       { role: "user", content: `⏭️ Skip: ${skipped.title}` },
       ...(nextTask
         ? [
-            {
-              role: "assistant" as const,
-              content: `⏭️ Skipped. Try this instead: ${nextTask.title} (source: ${nextTask.source})`,
-            },
-          ]
+          {
+            role: "assistant" as const,
+            content: `⏭️ Skipped. Try this instead: ${nextTask.title} (source: ${nextTask.source})`,
+          },
+        ]
         : [{ role: "assistant" as const, content: "Nothing else to suggest yet — sync first." }]),
     ]);
   }
@@ -341,7 +341,7 @@ export default function Home() {
         {/* Avatar/Image at the top */}
         <div className="flex-1 relative overflow-hidden mt-4">
           <Avatar isTalking={isAudioPlaying} />
-          
+
           {/* Debug: Manual test button */}
           <button
             onClick={() => {
@@ -394,9 +394,8 @@ export default function Home() {
           />
 
           <button
-            className={`rounded-lg border border-white/10 px-3 py-2 hover:bg-white/10 ${
-              useTTS ? "bg-white/10" : ""
-            }`}
+            className={`rounded-lg border border-white/10 px-3 py-2 hover:bg-white/10 ${useTTS ? "bg-white/10" : ""
+              }`}
             onClick={() => {
               const newState = !useTTS;
               console.log('🔊 TTS button clicked, new state:', newState);
