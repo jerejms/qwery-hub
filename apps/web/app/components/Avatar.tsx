@@ -22,33 +22,26 @@ export function Avatar({ isTalking }: AvatarProps) {
     }, [isTalking]);
 
     return (
-        <div className="pointer-events-none">
-            <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
-                {/* Avatar frame */}
-                <div className="relative w-full h-full flex items-center justify-center">
-                    {/* Idle image */}
-                    <img
-                        src="/image.png"
-                        alt="Assistant idle"
-                        className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-700 ease-in-out
-                ${isTalking ? "opacity-0" : "opacity-100"}
-            `}
-                        draggable={false}
-                    />
+        <div className="w-full h-full flex items-center justify-center pointer-events-none">
+            {/* Idle image */}
+            <img
+                src="/image.png"
+                alt="Assistant idle"
+                className={`absolute max-w-full max-h-full object-contain transition-opacity duration-700 ease-in-out ${isTalking ? "opacity-0" : "opacity-100"
+                    }`}
+                draggable={false}
+            />
 
-                    {/* Talking video */}
-                    <video
-                        ref={videoRef}
-                        src="/IMG_2476.MOV"
-                        loop
-                        muted
-                        playsInline
-                        className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-700 ease-in-out
-                ${isTalking ? "opacity-100" : "opacity-0"}
-            `}
-                    />
-                </div>
-            </div>
+            {/* Talking video */}
+            <video
+                ref={videoRef}
+                src="/IMG_2476.MOV"
+                loop
+                muted
+                playsInline
+                className={`absolute max-w-full max-h-full object-contain transition-opacity duration-700 ease-in-out ${isTalking ? "opacity-100" : "opacity-0"
+                    }`}
+            />
         </div>
     );
 }
