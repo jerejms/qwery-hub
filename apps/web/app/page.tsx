@@ -35,11 +35,7 @@ export default function Home() {
     setSending(true);
 
     try {
-      const data = await postJSON<{ reply: string }>("/api/chat", { 
-        message: text,
-        canvasToken: canvasToken || undefined,
-        nusmodsShareLink: nusmodsShareLink || undefined,
-      });
+      const data = await postJSON<{ reply: string }>("/api/chat", { message: text });
       setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
     } catch (e: any) {
       setMessages((m) => [
