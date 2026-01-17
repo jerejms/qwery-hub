@@ -22,8 +22,9 @@ export default function Home() {
 
   const canSend = useMemo(() => input.trim().length > 0 && !sending, [input, sending]);
 
-  const [nextClass, setNextClass] = useState<any>(null);
-  const [loadingNext, setLoadingNext] = useState(false);
+  const [upcomingClasses, setUpcomingClasses] = useState<any[]>([]);
+  const [loadingSchedule, setLoadingSchedule] = useState(false);
+
 
 
   async function send() {
@@ -71,32 +72,35 @@ export default function Home() {
       setSyncStatus(
         `Synced ✅ Canvas tasks: ${data.tasksCount}, Modules: ${data.modulesCount}`
       );
-      await refreshNextClass(nusmodsShareLink);
+      await refreshUpcomingClasses(nusmodsShareLink);
       setConnectOpen(false);
     } catch (e: any) {
       setSyncStatus(`Sync failed ❌ ${e.message}`);
     }
   }
-  async function refreshNextClass(linkOverride?: string) {
+
+  async function refreshUpcomingClasses(linkOverride?: string) {
     const link = linkOverride ?? nusmodsShareLink;
     if (!link) {
-      setNextClass(null);
+      setUpcomingClasses([]);
       return;
     }
 
-    setLoadingNext(true);
+    setLoadingSchedule(true);
     try {
-      const data = await postJSON<{ next: any }>("/api/schedule/next", {
+      const data = await postJSON<{ items: any[] }>("/api/schedule/upcoming", {
         nusmodsShareLink: link,
         semester: 2,
+        days: 3,
       });
-      setNextClass(data.next ?? null);
+      setUpcomingClasses(data.items ?? []);
     } catch (e: any) {
-      setNextClass({ error: e.message ?? "Failed to load next class" });
+      setUpcomingClasses([{ error: e.message ?? "Failed to load schedule" }]);
     } finally {
-      setLoadingNext(false);
+      setLoadingSchedule(false);
     }
   }
+
   
 
   return (
@@ -165,35 +169,40 @@ export default function Home() {
               <div className="font-medium">Schedule</div>
               <button
                 className="text-xs opacity-70 hover:opacity-100"
-                onClick={() => refreshNextClass()}
+                onClick={() => refreshUpcomingClasses()}
               >
-                {loadingNext ? "..." : "Refresh"}
+                {loadingSchedule ? "..." : "Refresh"}
               </button>
             </div>
 
             {!nusmodsShareLink ? (
               <div className="text-sm opacity-60 mt-2">
-                Sync NUSMods first to see your next class.
+                Sync NUSMods first to see your classes.
               </div>
-            ) : nextClass?.error ? (
+            ) : upcomingClasses?.[0]?.error ? (
               <div className="text-sm text-red-300 mt-2">
-                {nextClass.error}
+                {upcomingClasses[0].error}
               </div>
-            ) : !nextClass ? (
+            ) : upcomingClasses.length === 0 ? (
               <div className="text-sm opacity-60 mt-2">
-                No upcoming classes 🎉
+                No classes in the next 3 days 🎉
               </div>
             ) : (
-              <div className="mt-2 text-sm">
-                <div className="font-semibold">
-                  {nextClass.moduleCode} {nextClass.lessonType} ({nextClass.classNo})
-                </div>
-                <div className="opacity-80">
-                  {nextClass.day} {nextClass.startTime}–{nextClass.endTime}
-                </div>
-                {nextClass.venue && <div className="opacity-80">{nextClass.venue}</div>}
+              <div className="mt-2 space-y-2 text-sm">
+                {upcomingClasses.map((c, idx) => (
+                  <div key={idx} className="rounded-md border border-white/10 p-2">
+                    <div className="font-semibold">
+                      {c.moduleCode} {c.lessonType} ({c.classNo})
+                    </div>
+                    <div className="opacity-80">
+                      {c.day} {c.startTime}–{c.endTime}
+                    </div>
+                    {c.venue && <div className="opacity-80">{c.venue}</div>}
+                  </div>
+                ))}
               </div>
             )}
+
           </div>
 
         </div>
