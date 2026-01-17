@@ -1,16 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { postJSON } from "@/lib/api";
 import { parseNusmodsShareLink } from "@/lib/nusmods";
 import { pickNextTask, RightNowTask } from "@/lib/rightNow";
+import { Avatar } from "./components/Avatar";
+import { useMemo, useState } from "react";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
 export default function Home() {
-  // ===== Kernel task pools =====
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [canvasTasks, setCanvasTasks] = useState<RightNowTask[]>([]);
   const [scheduleTasks, setScheduleTasks] = useState<RightNowTask[]>([]);
+  const [doneTaskIds, setDoneTaskIds] = useState<Set<string>>(new Set());
+  const [skippedTaskIds, setSkippedTaskIds] = useState<Set<string>>(new Set());
+
   const [currentTask, setCurrentTask] = useState<RightNowTask | null>(null);
 
   // Done / skipped tracking (client-side)
@@ -19,11 +24,19 @@ export default function Home() {
 
   // ===== Chat =====
   const [messages, setMessages] = useState<Msg[]>([
-    { role: "assistant", content: "Hey! I’m your study buddy. What are we doing today?" },
+    { role: "assistant", content: "Hey! I'm your study buddy. What are we doing today?" },
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [useTTS, setUseTTS] = useState(false);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+
+  // Auto-scroll to bottom of chat
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   // ===== Connect/Sync =====
   const [connectOpen, setConnectOpen] = useState(false);
@@ -36,13 +49,9 @@ export default function Home() {
   // ===== Schedule widget =====
   const [upcomingClasses, setUpcomingClasses] = useState<any[]>([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
-
-  // ===== Right Now =====
   const [loadingNext, setLoadingNext] = useState(false);
 
-  // ---------------------------
   // Fallback: if no Canvas assignments, study 30 min for a lecture module
-  // ---------------------------
   function buildFallbackStudyTask(): RightNowTask | null {
     if (!upcomingClasses || upcomingClasses.length === 0) return null;
 
@@ -67,6 +76,11 @@ export default function Home() {
       id: `study:${moduleCode}:${startAtMs ?? "na"}`,
       title: `Study ${moduleCode} for 30 minutes`,
       source: "schedule",
+      urgency: 3,
+    };
+  }
+
+  // Choose next task deterministically with done/skip filtering + fallback
       dueAtMs: startAtMs,
       importance: 3,
       estimatedHours: 0.5,
@@ -186,6 +200,29 @@ function handleSkip() {
   ]);
 }
 
+    // mark skipped
+    setSkippedTaskIds((prev) => {
+      const next = new Set(prev);
+      next.add(skipped.id);
+      return next;
+    });
+
+    const nextTask = chooseNextTask({ avoidId: skipped.id });
+    setCurrentTask(nextTask);
+
+    setMessages((m) => [
+      ...m,
+      { role: "user", content: `⏭️ Skip: ${skipped.title}` },
+      ...(nextTask
+        ? [
+          {
+            role: "assistant" as const,
+            content: `⏭️ Skipped. Try this instead: ${nextTask.title} (source: ${nextTask.source})`,
+          },
+        ]
+        : [{ role: "assistant" as const, content: "Nothing else to suggest yet — sync first." }]),
+    ]);
+  }
 
   // ---------------------------
   // Chat send
@@ -212,6 +249,15 @@ function handleSkip() {
 
       if (useTTS && data.audioUrl) {
         const audio = new Audio(data.audioUrl);
+
+        // Track audio playback state for avatar animation
+        audio.onplay = () => setIsAudioPlaying(true);
+        audio.onended = () => setIsAudioPlaying(false);
+        audio.onerror = () => setIsAudioPlaying(false);
+
+        audio.play().catch(() => {
+          setIsAudioPlaying(false);
+        });
         audio.play().catch(() => {});
       }
     } catch (e: any) {
@@ -253,7 +299,8 @@ function handleSkip() {
       const ct: RightNowTask[] = (data.assignments ?? []).map((a: any) => ({
         id: `canvas:${a.id ?? a.title ?? crypto.randomUUID()}`,
         title: a.title ?? a.name ?? "Canvas task",
-        source: "canvas",
+        source: "canvas" as const,
+        urgency: 5,
         dueAtMs: a.dueDate ? new Date(a.dueDate).getTime() : undefined,
         importance: 3,
         estimatedHours: 1,
@@ -301,7 +348,8 @@ function handleSkip() {
       const st: RightNowTask[] = items.map((c: any, idx: number) => ({
         id: `schedule:${c.moduleCode ?? idx}:${c.lessonType ?? ""}:${c.classNo ?? ""}`,
         title: `Prep: ${c.moduleCode} ${c.lessonType} (${c.classNo})`,
-        source: "schedule",
+        urgency: 3,
+        source: "schedule" as const,
         dueAtMs: c.startAtMs ?? undefined,
         importance: 2,
         estimatedHours: 0.5,
@@ -315,14 +363,17 @@ function handleSkip() {
       setLoadingSchedule(false);
     }
   }
+  const themeClasses = theme === 'dark' 
+    ? "bg-[#0a0a0a] text-white border-white/10" 
+    : "bg-white text-slate-900 border-slate-200";
 
-  // ---------------------------
-  // UI
-  // ---------------------------
+  const cardClasses = theme === 'dark'
+    ? "bg-white/[0.03] border-white/10"
+    : "bg-slate-50 border-slate-200 shadow-sm";
   return (
     <div className="min-h-screen flex bg-black text-white">
       {/* LEFT: CHAT */}
-      <main className="flex-1 p-4 border-r border-white/10">
+      <main className="flex-1 p-4 border-r border-white/10 flex flex-col">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">qwery-hub</h1>
           <button
@@ -333,7 +384,13 @@ function handleSkip() {
           </button>
         </div>
 
-        <div className="mt-4 h-[70vh] rounded-lg border border-white/10 p-3 overflow-auto space-y-3">
+        {/* Avatar/Image at the top */}
+        <div className="flex-1 relative overflow-hidden mt-4">
+          <Avatar isTalking={isAudioPlaying} />
+        </div>
+
+        {/* Chat messages container */}
+        <div className="h-[40vh] rounded-lg border border-white/10 p-3 overflow-auto space-y-3">
           {messages.map((m, i) => (
             <div
               key={i}
@@ -359,6 +416,7 @@ function handleSkip() {
               </div>
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
         <div className="mt-4 flex gap-2">
@@ -391,7 +449,7 @@ function handleSkip() {
         </div>
       </main>
 
- {/* RIGHT: WIDGETS */}
+      {/* RIGHT: WIDGETS */}
       <aside className="w-96 p-6 flex flex-col gap-6 bg-[#0a0a0a]">
         <div>
           <h2 className="text-xl font-bold tracking-tight">Activity</h2>
@@ -543,7 +601,7 @@ function handleSkip() {
               </div>
 
               <div className="text-xs opacity-60 pt-2">
-                After syncing, click <span className="font-semibold">Prompt</span>. Finish marks tasks as done; Skip gives another task. If no Canvas tasks, you’ll get a 30-min lecture study task.
+                After syncing, click <span className="font-semibold">Prompt</span>. Finish marks tasks as done; Skip gives another task. If no Canvas tasks, you'll get a 30-min lecture study task.
               </div>
             </div>
           </div>
