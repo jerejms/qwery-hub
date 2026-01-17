@@ -22,7 +22,7 @@ export function analyzeQuestionIntent(question: string): QuestionIntent {
     const scheduleKeywords = [
         'schedule', 'timetable', 'class', 'classes', 'lecture', 'tutorial',
         'lab', 'nusmods', 'module', 'modules', 'when is', 'what time',
-        'next class', 'today\'s class', 'tomorrow\'s class', 'venue', 'location'
+        'next class', 'today\'s class', 'tomorrow\'s class', 'venue', 'location', 'mods', 'mod', 'module', 'modules', 'course', 'courses', 'next class', 'whats my next class', 'whats my next lecture', 'whats my next tutorial', 'whats my next lab', 'whats my next recitation', 'whats my next seminar', 'whats my next sectional teaching', 'whats my next lesson', 'whats my next class', 'whats my next lecture', 'whats my next tutorial', 'whats my next lab', 'whats my next recitation', 'whats my next seminar', 'whats my next sectional teaching', 'whats my next lesson'
     ];
 
     const hasRightNowIntent = rightNowKeywords.some(keyword =>

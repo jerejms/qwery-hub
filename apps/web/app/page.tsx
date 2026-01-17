@@ -31,22 +31,23 @@ export default function Home() {
 
   const [upcomingClasses, setUpcomingClasses] = useState<any[]>([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
+  const [loadingNext, setLoadingNext] = useState(false);
 
 
 
   async function handlePrompt() {
-  setLoadingNext(true);
+    setLoadingNext(true);
 
-  // 1️⃣ Collect tasks
-  const tasks = [...canvasTasks, ...scheduleTasks];
+    // 1️⃣ Collect tasks
+    const tasks = [...canvasTasks, ...scheduleTasks];
 
-  if (tasks.length === 0) {
-    setLoadingNext(false);
-    return;
-  }
+    if (tasks.length === 0) {
+      setLoadingNext(false);
+      return;
+    }
 
-  // 2️⃣ Auto-prompt the AI (no UI input)
-  const aiPrompt = `
+    // 2️⃣ Auto-prompt the AI (no UI input)
+    const aiPrompt = `
 You are a productivity assistant.
 
 Given the following tasks, choose EXACTLY ONE task the user should work on right now.
@@ -66,25 +67,25 @@ Return format:
 }
 `;
 
-  try {
-    const res = await postJSON<{ reply: string }>("/api/chat", {
-      messages: [{ role: "system", content: aiPrompt }],
-    });
+    try {
+      const res = await postJSON<{ reply: string }>("/api/chat", {
+        messages: [{ role: "system", content: aiPrompt }],
+      });
 
-    // 3️⃣ Parse AI response
-    const parsed = JSON.parse(res.reply);
-    const chosen = tasks.find((t) => t.id === parsed.id);
+      // 3️⃣ Parse AI response
+      const parsed = JSON.parse(res.reply);
+      const chosen = tasks.find((t) => t.id === parsed.id);
 
-    // 4️⃣ Replace RIGHT NOW
-    if (chosen) {
-      setCurrentTask(chosen);
+      // 4️⃣ Replace RIGHT NOW
+      if (chosen) {
+        setCurrentTask(chosen);
+      }
+    } catch (err) {
+      console.error("Failed to get AI task", err);
+    } finally {
+      setLoadingNext(false);
     }
-  } catch (err) {
-    console.error("Failed to get AI task", err);
-  } finally {
-    setLoadingNext(false);
   }
-}
 
 
 
@@ -182,7 +183,8 @@ Return format:
         setCurrentTask({
           id: crypto.randomUUID(),
           title: match[1],
-          source: "Canvas", // or "Schedule" if you want later
+          source: "canvas", // or "schedule" if you want later
+          urgency: 5,
         });
       }
     } catch (e: any) {
@@ -244,7 +246,7 @@ Return format:
     }
   }
 
-  
+
 
   return (
     <div className="min-h-screen flex bg-black text-white">
@@ -366,7 +368,7 @@ Return format:
           </div>
 
 
-                    <div className="rounded-lg border border-white/10 p-3">
+          <div className="rounded-lg border border-white/10 p-3">
             <div className="flex items-center justify-between">
               <div className="font-medium">Schedule</div>
               <button
