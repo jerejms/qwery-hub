@@ -9,14 +9,18 @@ import { Avatar } from "./components/Avatar";
 type Msg = { role: "user" | "assistant"; content: string };
 
 export default function Home() {
+  // ===== Kernel task pools =====
   const [canvasTasks, setCanvasTasks] = useState<RightNowTask[]>([]);
   const [scheduleTasks, setScheduleTasks] = useState<RightNowTask[]>([]);
+  const [currentTask, setCurrentTask] = useState<RightNowTask | null>(null);
+
+  // Done / skipped tracking (client-side)
   const [doneTaskIds, setDoneTaskIds] = useState<Set<string>>(new Set());
   const [skippedTaskIds, setSkippedTaskIds] = useState<Set<string>>(new Set());
 
-  const [currentTask, setCurrentTask] = useState<RightNowTask | null>(null);
+  // ===== Chat =====
   const [messages, setMessages] = useState<Msg[]>([
-    { role: "assistant", content: "Hey! I'm your study buddy. What are we doing today?" },
+    { role: "assistant", content: "Hey! I’m your study buddy. What are we doing today?" },
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -30,6 +34,7 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // ===== Connect/Sync =====
   const [connectOpen, setConnectOpen] = useState(false);
   const [canvasToken, setCanvasToken] = useState("");
   const [nusmodsShareLink, setNusmodsShareLink] = useState("");
@@ -37,11 +42,16 @@ export default function Home() {
 
   const canSend = useMemo(() => input.trim().length > 0 && !sending, [input, sending]);
 
+  // ===== Schedule widget =====
   const [upcomingClasses, setUpcomingClasses] = useState<any[]>([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
+
+  // ===== Right Now =====
   const [loadingNext, setLoadingNext] = useState(false);
 
+  // ---------------------------
   // Fallback: if no Canvas assignments, study 30 min for a lecture module
+  // ---------------------------
   function buildFallbackStudyTask(): RightNowTask | null {
     if (!upcomingClasses || upcomingClasses.length === 0) return null;
 
@@ -73,7 +83,9 @@ export default function Home() {
     };
   }
 
+  // ---------------------------
   // Choose next task deterministically with done/skip filtering + fallback
+  // ---------------------------
   function chooseNextTask(opts?: { avoidId?: string }) {
     const avoidId = opts?.avoidId;
 
@@ -105,29 +117,78 @@ export default function Home() {
     return pickNextTask(canvas2, sched2);
   }
 
+  // ---------------------------
+  // Helper: Send message to LLM
+  // ---------------------------
+  async function sendToLLM(userMessage: string, context?: any, addUserMessage = true) {
+    setSending(true);
+
+    if (addUserMessage) {
+      setMessages((m) => [...m, { role: "user", content: userMessage }]);
+    }
+
+    try {
+      const data = await postJSON<{ reply: string; audioUrl?: string | null }>("/api/chat", {
+        message: userMessage,
+        canvasToken: canvasToken || undefined,
+        nusmodsShareLink: nusmodsShareLink || undefined,
+        useTTS,
+        context: context || {},
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 700));
+
+      setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
+
+      if (useTTS && data.audioUrl) {
+        const audio = new Audio(data.audioUrl);
+
+        // Track audio playback state for avatar animation
+        audio.onplay = () => setIsAudioPlaying(true);
+        audio.onended = () => setIsAudioPlaying(false);
+        audio.onerror = () => setIsAudioPlaying(false);
+
+        audio.play().catch(() => {
+          setIsAudioPlaying(false);
+        });
+      }
+
+      return data.reply;
+    } catch (e: any) {
+      const errorMsg = `Error: ${e.message}`;
+      setMessages((m) => [...m, { role: "assistant", content: errorMsg }]);
+      return null;
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // ---------------------------
   // Right Now: Prompt / Finish / Skip
-  function promptRightNow() {
+  // ---------------------------
+  async function promptRightNow() {
     setLoadingNext(true);
     try {
       const chosen = chooseNextTask();
       setCurrentTask(chosen);
 
-      setMessages((m) => [
-        ...m,
-        { role: "user", content: "What should I work on right now?" },
-        {
-          role: "assistant",
-          content: chosen
-            ? `Right now: ${chosen.title} (source: ${chosen.source})`
-            : "I don't have any tasks yet — sync Canvas/NUSMods first.",
+      // Build context for LLM
+      const context = {
+        action: "prompt_task",
+        currentTask: chosen,
+        availableTasks: {
+          canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length,
+          schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id)).length,
         },
-      ]);
+      };
+
+      await sendToLLM("What should I work on right now?", context);
     } finally {
       setLoadingNext(false);
     }
   }
 
-  function handleFinish() {
+  async function handleFinish() {
     if (!currentTask) return;
 
     const finished = currentTask;
@@ -142,17 +203,21 @@ export default function Home() {
     const nextTask = chooseNextTask({ avoidId: finished.id });
     setCurrentTask(nextTask);
 
-    setMessages((m) => [
-      ...m,
-      { role: "user", content: `✅ Finished: ${finished.title}` },
-      { role: "assistant", content: `✅ Done: ${finished.title}` },
-      ...(nextTask
-        ? [{ role: "assistant" as const, content: `Next: ${nextTask.title} (source: ${nextTask.source})` }]
-        : [{ role: "assistant" as const, content: "No next task right now — sync or add tasks." }]),
-    ]);
+    // Build context for LLM
+    const context = {
+      action: "finish_task",
+      finishedTask: finished,
+      nextTask: nextTask,
+      remainingTasks: {
+        canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id) && t.id !== finished.id).length,
+        schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id) && t.id !== finished.id).length,
+      },
+    };
+
+    await sendToLLM(`I just finished: ${finished.title}`, context);
   }
 
-  function handleSkip() {
+  async function handleSkip() {
     if (!currentTask) return;
 
     const skipped = currentTask;
@@ -167,74 +232,45 @@ export default function Home() {
     const nextTask = chooseNextTask({ avoidId: skipped.id });
     setCurrentTask(nextTask);
 
-    setMessages((m) => [
-      ...m,
-      { role: "user", content: `⏭️ Skip: ${skipped.title}` },
-      ...(nextTask
-        ? [
-          {
-            role: "assistant" as const,
-            content: `⏭️ Skipped. Try this instead: ${nextTask.title} (source: ${nextTask.source})`,
-          },
-        ]
-        : [{ role: "assistant" as const, content: "Nothing else to suggest yet — sync first." }]),
-    ]);
+    // Build context for LLM
+    const context = {
+      action: "skip_task",
+      skippedTask: skipped,
+      nextTask: nextTask,
+      availableTasks: {
+        canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id) && !skippedTaskIds.has(t.id) && t.id !== skipped.id).length,
+        schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id) && !skippedTaskIds.has(t.id) && t.id !== skipped.id).length,
+      },
+    };
+
+    await sendToLLM(`I want to skip: ${skipped.title}`, context);
   }
 
+
+  // ---------------------------
+  // Chat send
+  // ---------------------------
   async function send() {
     if (!canSend) return;
 
     const text = input.trim();
     setInput("");
-    setMessages((m) => [...m, { role: "user", content: text }]);
-    setSending(true);
 
-    try {
-      const data = await postJSON<{ reply: string; audioUrl?: string | null }>("/api/chat", {
-        message: text,
-        canvasToken: canvasToken || undefined,
-        nusmodsShareLink: nusmodsShareLink || undefined,
-        useTTS,
-      });
+    // Send to LLM with current task context
+    const context = {
+      currentTask: currentTask,
+      availableTasks: {
+        canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length,
+        schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id)).length,
+      },
+    };
 
-      await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 700));
-
-      setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
-
-      if (useTTS && data.audioUrl) {
-        console.log('🔊 TTS enabled, audioUrl received, length:', data.audioUrl.length);
-        const audio = new Audio(data.audioUrl);
-
-        // Track audio playback state for avatar animation
-        audio.onplay = () => {
-          console.log('🎵 Audio started playing - setting isAudioPlaying to true');
-          setIsAudioPlaying(true);
-        };
-        audio.onended = () => {
-          console.log('🔇 Audio ended - setting isAudioPlaying to false');
-          setIsAudioPlaying(false);
-        };
-        audio.onerror = (e) => {
-          console.error('❌ Audio error:', e);
-          setIsAudioPlaying(false);
-        };
-
-        audio.play()
-          .then(() => console.log('✅ Audio.play() promise resolved'))
-          .catch((err) => {
-            console.error('❌ Audio.play() failed:', err);
-            setIsAudioPlaying(false);
-          });
-      } else {
-        console.log('⚠️ TTS debug - useTTS:', useTTS, 'audioUrl:', data.audioUrl ? 'present' : 'missing');
-      }
-    } catch (e: any) {
-      setMessages((m) => [...m, { role: "assistant", content: `Error: ${e.message}` }]);
-    } finally {
-      setSending(false);
-    }
+    await sendToLLM(text, context, true);
   }
 
+  // ---------------------------
+  // Sync
+  // ---------------------------
   async function sync() {
     let codes: string[] = [];
     try {
@@ -286,6 +322,9 @@ export default function Home() {
     }
   }
 
+  // ---------------------------
+  // Schedule refresh
+  // ---------------------------
   async function refreshUpcomingClasses(linkOverride?: string) {
     const link = linkOverride ?? nusmodsShareLink;
     if (!link) {
@@ -324,6 +363,9 @@ export default function Home() {
     }
   }
 
+  // ---------------------------
+  // UI
+  // ---------------------------
   return (
     <div className="min-h-screen flex bg-black text-white">
       {/* LEFT: CHAT */}
@@ -543,7 +585,7 @@ export default function Home() {
               </div>
 
               <div className="text-xs opacity-60 pt-2">
-                After syncing, click <span className="font-semibold">Prompt</span>. Finish marks tasks as done; Skip gives another task. If no Canvas tasks, you'll get a 30-min lecture study task.
+                After syncing, click <span className="font-semibold">Prompt</span>. Finish marks tasks as done; Skip gives another task. If no Canvas tasks, you’ll get a 30-min lecture study task.
               </div>
             </div>
           </div>

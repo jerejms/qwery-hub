@@ -9,7 +9,7 @@ import { StudyTask, ScheduleEvent } from "@/app/api/src/types";
 
 export async function POST(req: Request) {
   try {
-    const { message, canvasToken, nusmodsShareLink, useTTS, semester = 2 } = await req.json();
+    const { message, canvasToken, nusmodsShareLink, useTTS, context } = await req.json();
 
     if (!message) {
       return NextResponse.json(
@@ -62,7 +62,12 @@ export async function POST(req: Request) {
 
     // Format context for LLM
     const currentTime = new Date();
-    const ragContext = await formatContextForLLM(tasks, events, currentTime, moduleWorkloads);
+    let ragContext = await formatContextForLLM(tasks, events, currentTime, moduleWorkloads);
+
+    // Add frontend context (current task, next task, etc.) if provided
+    if (context) {
+      ragContext += `\n\nFRONTEND CONTEXT:\n${JSON.stringify(context, null, 2)}`;
+    }
 
     // Call LLM with context
     const assistantMessage = await llmService.chat(userId, message, ragContext);
