@@ -391,92 +391,118 @@ function handleSkip() {
         </div>
       </main>
 
-      {/* RIGHT: WIDGETS */}
-      <aside className="w-80 p-4">
-        <h2 className="text-lg font-semibold">Widgets</h2>
-        <div className="mt-3 text-sm opacity-70">{syncStatus}</div>
-
-        <div className="mt-4 space-y-3">
-          {/* RIGHT NOW */}
-          <div className="space-y-3 rounded-lg border border-white/10 p-3">
-            <div className="font-medium">Right Now</div>
-            <div className="text-xs opacity-70">
-              canvas: {canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length} • schedule:{" "}
-              {scheduleTasks.filter((t) => !doneTaskIds.has(t.id)).length}
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={promptRightNow}
-                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50"
-                disabled={loadingNext}
-              >
-                {loadingNext ? "..." : "Prompt"}
-              </button>
-
-              <button
-                onClick={handleFinish}
-                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-40"
-                disabled={!currentTask}
-              >
-                Finish
-              </button>
-
-              <button
-                onClick={handleSkip}
-                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-40"
-                disabled={!currentTask}
-              >
-                Skip
-              </button>
-            </div>
-
-            <div className="text-sm text-white/80">
-              {currentTask ? (
-                <>
-                  <div className="font-semibold">{currentTask.title}</div>
-                  <div className="text-xs opacity-70">Source: {currentTask.source}</div>
-                </>
-              ) : (
-                <div className="opacity-70">No recommendation yet. Sync then Prompt.</div>
-              )}
-            </div>
+ {/* RIGHT: WIDGETS */}
+      <aside className="w-96 p-6 flex flex-col gap-6 bg-[#0a0a0a]">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight">Activity</h2>
+          <div className="mt-1 flex items-center gap-2 text-xs">
+             <span className={`h-2 w-2 rounded-full ${syncStatus.includes('✅') ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`}></span>
+             <span className="opacity-60">{syncStatus}</span>
           </div>
+        </div>
 
-          {/* SCHEDULE */}
-          <div className="rounded-lg border border-white/10 p-3">
-            <div className="flex items-center justify-between">
-              <div className="font-medium">Schedule</div>
-              <button
-                className="text-xs opacity-70 hover:opacity-100"
-                onClick={() => refreshUpcomingClasses()}
-              >
-                {loadingSchedule ? "..." : "Refresh"}
-              </button>
+        <div className="space-y-6 overflow-auto pr-2 custom-scrollbar">
+          {/* RIGHT NOW FOCUS CARD */}
+          <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.05] to-transparent p-5">
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-xs font-bold uppercase tracking-widest text-white/40">Current Focus</span>
+              <div className="flex gap-1">
+                <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-bold">
+                  {canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length} Left
+                </span>
+              </div>
             </div>
 
-            {!nusmodsShareLink ? (
-              <div className="text-sm opacity-60 mt-2">Sync NUSMods first to see your classes.</div>
-            ) : upcomingClasses?.[0]?.error ? (
-              <div className="text-sm text-red-300 mt-2">{upcomingClasses[0].error}</div>
-            ) : upcomingClasses.length === 0 ? (
-              <div className="text-sm opacity-60 mt-2">No classes in the next 3 days 🎉</div>
-            ) : (
-              <div className="mt-2 space-y-2 text-sm">
-                {upcomingClasses.map((c, idx) => (
-                  <div key={idx} className="rounded-md border border-white/10 p-2">
-                    <div className="font-semibold">
-                      {c.moduleCode} {c.lessonType} ({c.classNo})
-                    </div>
-                    <div className="opacity-80">
-                      {c.day} {c.startTime}–{c.endTime}
-                    </div>
-                    {c.venue && <div className="opacity-80">{c.venue}</div>}
+            {currentTask ? (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold leading-tight text-white">{currentTask.title}</h3>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 uppercase">
+                      {currentTask.source}
+                    </span>
+                    {currentTask.dueAtMs && (
+                      <span className="text-[10px] text-orange-400">
+                         Due Soon
+                      </span>
+                    )}
                   </div>
-                ))}
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    onClick={handleFinish}
+                    className="flex-1 rounded-xl bg-white text-black py-2.5 text-sm font-bold hover:bg-white/90 transition-all active:scale-95"
+                  >
+                    Complete
+                  </button>
+                  <button
+                    onClick={handleSkip}
+                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium hover:bg-white/10 transition-all"
+                    title="Skip Task"
+                  >
+                    ⏭️
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="py-4 text-center">
+                <p className="text-sm text-white/40 mb-4">Ready to start your session?</p>
+                <button
+                  onClick={promptRightNow}
+                  disabled={loadingNext}
+                  className="w-full rounded-xl border border-dashed border-white/20 py-4 text-sm font-medium hover:bg-white/5 hover:border-white/40 transition-all"
+                >
+                  {loadingNext ? "Finding best task..." : "+ Get Next Task"}
+                </button>
               </div>
             )}
-          </div>
+          </section>
+
+          {/* SCHEDULE SECTION */}
+          <section className="space-y-4">
+            <div className="flex items-center justify-between px-1">
+              <h3 className="text-sm font-bold text-white/80 uppercase tracking-wider">Schedule</h3>
+              <button
+                className="text-[10px] text-blue-400 hover:underline flex items-center gap-1"
+                onClick={() => refreshUpcomingClasses()}
+              >
+                {loadingSchedule ? "Refreshing..." : "↻ Refresh"}
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {!nusmodsShareLink ? (
+                <div className="rounded-xl border border-dashed border-white/10 p-4 text-center text-xs opacity-40">
+                  Connect NUSMods to view schedule
+                </div>
+              ) : upcomingClasses.length === 0 ? (
+                <div className="rounded-xl bg-green-500/5 border border-green-500/10 p-4 text-center">
+                   <p className="text-sm text-green-400 font-medium">Clear Schedule! 🎉</p>
+                </div>
+              ) : (
+                upcomingClasses.map((c, idx) => (
+                  <div 
+                    key={idx} 
+                    className="group relative flex gap-4 rounded-xl border border-white/[0.03] bg-white/[0.02] p-3 hover:bg-white/[0.05] transition-colors"
+                  >
+                    <div className="flex flex-col items-center justify-center border-r border-white/10 pr-3 min-w-[50px]">
+                       <span className="text-[10px] font-bold uppercase text-white/40">{c.day?.substring(0,3)}</span>
+                       <span className="text-sm font-bold">{c.startTime?.split(':')[0]}</span>
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-bold group-hover:text-blue-400 transition-colors">
+                        {c.moduleCode}
+                      </div>
+                      <div className="text-[11px] text-white/50 leading-tight mt-0.5">
+                        {c.lessonType} • {c.venue || "No Venue"}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
         </div>
       </aside>
 
