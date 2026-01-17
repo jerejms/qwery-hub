@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { postJSON } from "@/lib/api";
 import { parseNusmodsShareLink } from "@/lib/nusmods";
 import { pickNextTask, RightNowTask } from "@/lib/rightNow";
 import { Avatar } from "./components/Avatar";
+import { WelcomeOverlay } from "./components/WelcomeOverlay";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -16,6 +18,22 @@ function safeUUID(): string {
 }
 
 export default function Home() {
+  // ===== Welcome Overlay =====
+  const [showWelcome, setShowWelcome] = useState(false);
+
+  useEffect(() => {
+    // Check if user has visited before
+    const hasVisited = localStorage.getItem("qwery-hub-hasVisited");
+    if (!hasVisited) {
+      setShowWelcome(true);
+    }
+  }, []);
+
+  const handleCloseWelcome = () => {
+    setShowWelcome(false);
+    localStorage.setItem("qwery-hub-hasVisited", "true");
+  };
+
   // ===== Kernel task pools =====
   const [canvasTasks, setCanvasTasks] = useState<RightNowTask[]>([]);
   const [scheduleTasks, setScheduleTasks] = useState<RightNowTask[]>([]);
@@ -46,6 +64,7 @@ export default function Home() {
   const [canvasToken, setCanvasToken] = useState("");
   const [nusmodsShareLink, setNusmodsShareLink] = useState("");
   const [syncStatus, setSyncStatus] = useState("Not connected");
+  const [syncCounts, setSyncCounts] = useState<{ tasks: number; modules: number } | null>(null);
 
   const canSend = useMemo(() => input.trim().length > 0 && !sending, [input, sending]);
 
@@ -405,10 +424,12 @@ export default function Home() {
       codes = nusmodsShareLink ? parseNusmodsShareLink(nusmodsShareLink).moduleCodes : [];
     } catch {
       setSyncStatus("Invalid NUSMods link ❌ (paste the full Share/Sync link)");
+      setSyncCounts(null);
       return;
     }
 
     setSyncStatus("Syncing...");
+    setSyncCounts(null);
 
     try {
       const data = await postJSON<{
@@ -422,7 +443,8 @@ export default function Home() {
         nusmodsShareLink,
       });
 
-      setSyncStatus(`Synced ✅ Canvas tasks: ${data.tasksCount}, Modules: ${data.modulesCount}`);
+      setSyncStatus("Synced ✅");
+      setSyncCounts({ tasks: data.tasksCount, modules: data.modulesCount });
 
       // Canvas assignments -> RightNowTask (safeUUID prevents crypto.randomUUID crashes)
       const ct: RightNowTask[] = (data.assignments ?? []).map((a: any) => ({
@@ -447,6 +469,7 @@ export default function Home() {
       setConnectOpen(false);
     } catch (e: any) {
       setSyncStatus(`Sync failed ❌ ${e.message}`);
+      setSyncCounts(null);
     }
   }
 
@@ -474,9 +497,8 @@ export default function Home() {
 
       // Upcoming classes -> prep tasks
       const st: RightNowTask[] = items.map((c: any, idx: number) => ({
-        id: `schedule:${c.moduleCode ?? idx}:${c.lessonType ?? ""}:${c.classNo ?? ""}:${
-          c.startAtMs ?? idx
-        }`,
+        id: `schedule:${c.moduleCode ?? idx}:${c.lessonType ?? ""}:${c.classNo ?? ""}:${c.startAtMs ?? idx
+          }`,
         title: `Prep: ${c.moduleCode} ${c.lessonType} (${c.classNo})`,
         source: "schedule" as const,
         importance: 2,
@@ -497,11 +519,20 @@ export default function Home() {
   // UI
   // ---------------------------
   return (
-    <div className="min-h-screen flex bg-black text-white">
+    <div className="min-h-screen flex bg-slate-950 text-white">
       {/* LEFT: CHAT */}
-      <main className="flex-1 p-4 border-r border-white/10 flex flex-col">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">qwery-hub</h1>
+      <main className="flex-1 p-4 border-r border-white/10 flex flex-col bg-slate-950">
+        <div className="flex items-center justify-between bg-black p-2 -m-2 mb-2 rounded-lg">
+          <div className="flex items-center">
+            <Image
+              src="/logo.png"
+              alt="qwery-hub logo"
+              width={128}
+              height={40}
+              className="h-16 w-auto object-contain"
+              priority
+            />
+          </div>
           <button
             className="rounded-lg border border-white/10 px-3 py-2 hover:bg-white/10"
             onClick={() => setConnectOpen(true)}
@@ -513,21 +544,10 @@ export default function Home() {
         {/* Avatar/Image at the top */}
         <div className="flex-1 relative overflow-hidden mt-4">
           <Avatar isTalking={isAudioPlaying} />
-
-          {/* Debug: Manual test button */}
-          <button
-            onClick={() => {
-              console.log("🧪 Manual toggle: isAudioPlaying", !isAudioPlaying);
-              setIsAudioPlaying(!isAudioPlaying);
-            }}
-            className="absolute bottom-4 right-4 px-3 py-1 bg-white/10 rounded text-xs hover:bg-white/20 z-50"
-          >
-            Test Avatar: {isAudioPlaying ? "Talking" : "Idle"}
-          </button>
         </div>
 
         {/* Chat messages container */}
-        <div className="h-[40vh] rounded-lg border border-white/10 p-3 overflow-auto space-y-3 mb-2">
+        <div className="h-[40vh] rounded-lg border border-white/10 bg-zinc-950 p-3 overflow-auto space-y-3 mb-2">
           {messages.map((m, i) => (
             <div
               key={i}
@@ -556,7 +576,7 @@ export default function Home() {
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="mt-4 flex gap-2 sticky bottom-0 bg-black pt-2 pb-2">
+        <div className="mt-4 flex gap-2 sticky bottom-0 bg-slate-950 pt-2 pb-2">
           <input
             className="flex-1 rounded-lg border border-white/10 bg-transparent px-3 py-2 outline-none"
             placeholder="Ask your study buddy..."
@@ -570,18 +590,24 @@ export default function Home() {
           />
 
           <button
-            className={`rounded-lg border border-white/10 px-3 py-2 hover:bg-white/10 ${
-              useTTS ? "bg-white/10" : ""
-            }`}
+            className={`relative rounded-lg border px-3 py-2 transition-colors ${useTTS
+              ? "bg-white/10 border-white/10 hover:bg-white/15"
+              : "border-red-500/30 hover:bg-red-500/10"
+              }`}
             onClick={() => {
               const newState = !useTTS;
               console.log("🔊 TTS button clicked, new state:", newState);
               setUseTTS(newState);
             }}
-            title="Enable text-to-speech"
+            title={useTTS ? "Disable text-to-speech" : "Enable text-to-speech"}
             type="button"
           >
-            {useTTS ? "🔊" : "🔇"}
+            <span className="text-lg">{useTTS ? "🔊" : "🔇"}</span>
+            {!useTTS && (
+              <span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 bg-red-500 rounded-full text-white text-xs font-bold">
+                ✕
+              </span>
+            )}
           </button>
 
           <button
@@ -595,98 +621,204 @@ export default function Home() {
       </main>
 
       {/* RIGHT: WIDGETS */}
-      <aside className="w-80 p-4">
+      <aside className="w-80 p-4 bg-black">
         <h2 className="text-lg font-semibold">Widgets</h2>
-        <div className="mt-3 text-sm opacity-70">{syncStatus}</div>
+        <div className="mt-3 text-sm opacity-70">
+          {syncStatus}
+          {syncCounts && (
+            <span>
+              {" "}Canvas tasks: <span className="font-semibold text-blue-400">{syncCounts.tasks}</span>, Modules: <span className="font-semibold text-white">{syncCounts.modules}</span>
+            </span>
+          )}
+        </div>
 
         <div className="mt-4 space-y-3">
           {/* RIGHT NOW */}
-          <div className="space-y-3 rounded-lg border border-white/10 p-3">
-            <div className="font-medium">Right Now</div>
-            <div className="text-xs opacity-70">
-              canvas: {canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length} • schedule:{" "}
-              {scheduleTasks.filter((t) => !doneTaskIds.has(t.id)).length}
-            </div>
+          <div className="rounded-lg border border-white/10 overflow-hidden">
+            {/* Header */}
+            <div className="bg-white/5 p-3 border-b border-white/10">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg font-bold text-red-500">!</span>
+                  <span className="font-semibold">Right Now</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                    {canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length}
+                  </span>
+                  <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/10 text-white/70 border border-white/20">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white/60"></span>
+                    {scheduleTasks.filter((t) => !doneTaskIds.has(t.id)).length}
+                  </span>
+                </div>
+              </div>
 
-            <div className="flex gap-2">
-              <button
-                onClick={promptRightNow}
-                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50"
-                disabled={loadingNext}
-              >
-                {loadingNext ? "..." : "Prompt"}
-              </button>
-
-              <button
-                onClick={handleFinish}
-                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-40"
-                disabled={!currentTask}
-              >
-                Finish
-              </button>
-
-              <button
-                onClick={handleSkip}
-                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-40"
-                disabled={!currentTask}
-              >
-                Skip
-              </button>
-            </div>
-
-            <div className="text-sm text-white/80">
-              {currentTask ? (
-                <>
-                  <div className="font-semibold">{currentTask.title}</div>
-                  <div className="text-xs opacity-70">Source: {currentTask.source}</div>
-                </>
-              ) : (
-                <div className="opacity-70">No recommendation yet. Sync then Prompt.</div>
+              {/* Progress bar */}
+              {(canvasTasks.length > 0 || scheduleTasks.length > 0) && (
+                <div className="mt-2">
+                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-500 rounded-full transition-all duration-500"
+                      style={{
+                        width: `${((doneTaskIds.size / (canvasTasks.length + scheduleTasks.length)) * 100)
+                          }%`,
+                      }}
+                    ></div>
+                  </div>
+                  <div className="text-xs text-white/50 mt-1">
+                    {doneTaskIds.size} / {canvasTasks.length + scheduleTasks.length} completed
+                  </div>
+                </div>
               )}
+            </div>
+
+            {/* Task Card */}
+            <div className="p-3">
+              {currentTask ? (
+                <div
+                  className={`rounded-lg border-l-4 p-4 bg-white/5 transition-all duration-300 hover:bg-white/10 ${currentTask.source === "canvas"
+                    ? "border-l-blue-500"
+                    : "border-l-white/40"
+                    }`}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex-1">
+                      <div className="font-semibold text-base mb-1">{currentTask.title}</div>
+                      <div className="flex items-center gap-2 text-xs text-white/60">
+                        <span className="capitalize">{currentTask.source}</span>
+                        {currentTask.estimatedHours && (
+                          <span>• {currentTask.estimatedHours}h</span>
+                        )}
+                      </div>
+                    </div>
+                    {currentTask.importance && (
+                      <div className="flex gap-0.5">
+                        {Array.from({ length: Math.min(currentTask.importance, 5) }).map((_, i) => (
+                          <span key={i} className="text-yellow-400 text-xs">⭐</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {currentTask.dueAtMs && (
+                    <div className="mt-2">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs ${Date.now() > currentTask.dueAtMs
+                          ? "bg-red-500/20 text-red-300 border border-red-500/30"
+                          : currentTask.dueAtMs - Date.now() < 24 * 60 * 60 * 1000
+                            ? "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30"
+                            : "bg-green-500/20 text-green-300 border border-green-500/30"
+                          }`}
+                      >
+                        Due: {new Date(currentTask.dueAtMs).toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <div className="text-sm text-white/60 mb-1">
+                    {canvasTasks.length === 0 && scheduleTasks.length === 0
+                      ? "Sync your data to get started"
+                      : "No recommendation yet"}
+                  </div>
+                  <div className="text-xs text-white/40">
+                    Click Get Next below to see your next task
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <button
+                  onClick={handleFinish}
+                  disabled={!currentTask}
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-500/20 hover:bg-green-500/30 text-green-300 border border-green-500/30 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <span className="font-medium">Complete</span>
+                </button>
+
+                <button
+                  onClick={handleSkip}
+                  disabled={!currentTask}
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 border border-orange-500/30 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <span className="font-medium">Skip</span>
+                </button>
+
+                <button
+                  onClick={promptRightNow}
+                  disabled={loadingNext}
+                  className="col-span-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 transition-all disabled:opacity-50 hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <span className="font-medium">{loadingNext ? "Loading..." : "Get Next"}</span>
+                </button>
+              </div>
             </div>
           </div>
 
           {/* SCHEDULE */}
-          <div className="rounded-lg border border-white/10 p-3">
-            <div className="flex items-center justify-between">
-              <div className="font-medium">Schedule</div>
+          <div className="rounded-lg border border-white/10 overflow-hidden">
+            {/* Header */}
+            <div className="bg-white/5 p-3 border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📅</span>
+                <span className="font-semibold">Schedule</span>
+              </div>
               <button
-                className="text-xs opacity-70 hover:opacity-100"
+                className="px-2 py-1 text-xs rounded bg-white/10 hover:bg-white/20 transition-colors"
                 onClick={() => refreshUpcomingClasses()}
               >
                 {loadingSchedule ? "..." : "Refresh"}
               </button>
             </div>
 
-            {!nusmodsShareLink ? (
-              <div className="text-sm opacity-60 mt-2">Sync NUSMods first to see your classes.</div>
-            ) : upcomingClasses?.[0]?.error ? (
-              <div className="text-sm text-red-300 mt-2">{upcomingClasses[0].error}</div>
-            ) : upcomingClasses.length === 0 ? (
-              <div className="text-sm opacity-60 mt-2">No classes in the next 3 days 🎉</div>
-            ) : (
-              <div className="mt-2 space-y-2 text-sm">
-                {upcomingClasses.map((c, idx) => (
-                  <div key={idx} className="rounded-md border border-white/10 p-2">
-                    <div className="font-semibold">
-                      {c.moduleCode} {c.lessonType} ({c.classNo})
+            {/* Content */}
+            <div className="p-3">
+              {!nusmodsShareLink ? (
+                <div className="text-sm text-white/50 text-center py-4">
+                  Sync NUSMods first to see your classes
+                </div>
+              ) : upcomingClasses?.[0]?.error ? (
+                <div className="text-sm text-red-300 text-center py-4">{upcomingClasses[0].error}</div>
+              ) : upcomingClasses.length === 0 ? (
+                <div className="text-sm text-white/50 text-center py-4">
+                  No classes in the next 3 days
+                </div>
+              ) : (
+                <div className="space-y-2 text-sm">
+                  {upcomingClasses.map((c, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-lg border-l-4 border-l-white/40 bg-white/5 hover:bg-white/10 p-3 transition-colors"
+                    >
+                      <div className="font-semibold text-white mb-1">
+                        {c.moduleCode} {c.lessonType}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-white/60">
+                        <span>{c.day}</span>
+                        <span>•</span>
+                        <span>{c.startTime}–{c.endTime}</span>
+                      </div>
+                      {c.venue && (
+                        <div className="text-xs text-white/60 mt-1">
+                          📍 {c.venue}
+                        </div>
+                      )}
                     </div>
-                    <div className="opacity-80">
-                      {c.day} {c.startTime}–{c.endTime}
-                    </div>
-                    {c.venue && <div className="opacity-80">{c.venue}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </aside>
 
       {/* CONNECT MODAL */}
       {connectOpen && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4">
-          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-black p-4">
+        <div className="fixed inset-0 bg-slate-950/70 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-slate-950 p-4">
             <div className="flex items-center justify-between">
               <div className="text-lg font-semibold">Connect data sources</div>
               <button onClick={() => setConnectOpen(false)}>✕</button>
@@ -728,6 +860,9 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* WELCOME OVERLAY */}
+      <WelcomeOverlay isOpen={showWelcome} onClose={handleCloseWelcome} />
     </div>
   );
 }
