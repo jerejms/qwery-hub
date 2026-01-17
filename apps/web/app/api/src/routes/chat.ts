@@ -6,7 +6,7 @@ import { formatContextForLLM } from '../services/ragService';
 import { llmService } from '../services/llmService';
 import { agoraService } from '../services/agoraService';
 import { analyzeQuestionIntent } from '../services/questionAnalysisService';
-import { fetchCanvasTasks, fetchNusModsSchedule } from '../services/apiFetchService';
+import { fetchCanvasTasks, fetchNusModsSchedule, fetchNusModsWorkloads } from '../services/apiFetchService';
 
 const router = Router();
 
@@ -28,6 +28,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     let tasks: StudyTask[] = [];
     let events: ScheduleEvent[] = [];
+    let moduleWorkloads: Record<string, number> = {};
 
     // Fetch from APIs based on question intent
     if (intent === 'RIGHTNOW' || intent === 'BOTH' || intent === 'GENERAL') {
@@ -44,6 +45,8 @@ router.post('/', async (req: Request, res: Response) => {
       // Fetch NUSMods schedule if share link is provided
       if (request.nusmodsShareLink) {
         events = await fetchNusModsSchedule(request.nusmodsShareLink, request.userId);
+        // Also fetch workload data
+        moduleWorkloads = await fetchNusModsWorkloads(request.nusmodsShareLink);
       } else {
         // Fallback to JSON file if no share link
         events = await getUserSchedule(request.userId);
@@ -52,7 +55,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Format context for LLM
     const currentTime = new Date();
-    const ragContext = await formatContextForLLM(tasks, events, currentTime);
+    const ragContext = await formatContextForLLM(tasks, events, currentTime, moduleWorkloads);
 
     // Call LLM with context
     const assistantMessage = await llmService.chat(request.userId, request.message, ragContext);
