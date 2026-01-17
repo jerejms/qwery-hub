@@ -76,7 +76,10 @@ export default function Home() {
       id: `study:${moduleCode}:${startAtMs ?? "na"}`,
       title: `Study ${moduleCode} for 30 minutes`,
       source: "schedule",
-      urgency: 3,
+      importance: 3,
+      estimatedHours: 0.5,
+      difficulty: 2,
+      dueAtMs: startAtMs,
     };
   }
 
@@ -298,7 +301,10 @@ export default function Home() {
         id: `canvas:${a.id ?? a.title ?? crypto.randomUUID()}`,
         title: a.title ?? a.name ?? "Canvas task",
         source: "canvas" as const,
-        urgency: 5,
+        importance: 5,
+        estimatedHours: 1,
+        difficulty: 3,
+        dueAtMs: a.dueDate ? new Date(a.dueDate).getTime() : undefined,
       }));
 
       setCanvasTasks(ct);
@@ -343,7 +349,10 @@ export default function Home() {
         id: `schedule:${c.moduleCode ?? idx}:${c.lessonType ?? ""}:${c.classNo ?? ""}`,
         title: `Prep: ${c.moduleCode} ${c.lessonType} (${c.classNo})`,
         source: "schedule" as const,
-        urgency: 3,
+        importance: 2,
+        estimatedHours: 0.5,
+        difficulty: 2,
+        dueAtMs: c.startAtMs ?? undefined,
       }));
       setScheduleTasks(st);
     } catch (e: any) {
@@ -374,6 +383,17 @@ export default function Home() {
         {/* Avatar/Image at the top */}
         <div className="flex-1 relative overflow-hidden mt-4">
           <Avatar isTalking={isAudioPlaying} />
+
+          {/* Debug: Manual test button */}
+          <button
+            onClick={() => {
+              console.log('🧪 Manual toggle: isAudioPlaying', !isAudioPlaying);
+              setIsAudioPlaying(!isAudioPlaying);
+            }}
+            className="absolute bottom-4 right-4 px-3 py-1 bg-white/10 rounded text-xs hover:bg-white/20 z-50"
+          >
+            Test Avatar: {isAudioPlaying ? 'Talking' : 'Idle'}
+          </button>
         </div>
 
         {/* Chat messages container */}
@@ -418,7 +438,11 @@ export default function Home() {
           <button
             className={`rounded-lg border border-white/10 px-3 py-2 hover:bg-white/10 ${useTTS ? "bg-white/10" : ""
               }`}
-            onClick={() => setUseTTS(!useTTS)}
+            onClick={() => {
+              const newState = !useTTS;
+              console.log('🔊 TTS button clicked, new state:', newState);
+              setUseTTS(newState);
+            }}
             title="Enable text-to-speech"
             type="button"
           >

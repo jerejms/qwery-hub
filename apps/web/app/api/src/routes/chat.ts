@@ -22,6 +22,7 @@ const router = Router();
 router.post('/', async (req: Request, res: Response) => {
   try {
     const request: ChatRequest = req.body;
+    const semester = (request as any).semester ?? 2; // Extract semester with default
 
     // Analyze question to determine which API to call
     const intent = analyzeQuestionIntent(request.message);
@@ -44,7 +45,7 @@ router.post('/', async (req: Request, res: Response) => {
     if (intent === 'SCHEDULE' || intent === 'BOTH' || intent === 'GENERAL') {
       // Fetch NUSMods schedule if share link is provided
       if (request.nusmodsShareLink) {
-        events = await fetchNusModsSchedule(request.nusmodsShareLink, request.userId);
+        events = await fetchNusModsSchedule(request.nusmodsShareLink, request.userId, semester);
         // Also fetch workload data
         moduleWorkloads = await fetchNusModsWorkloads(request.nusmodsShareLink);
       } else {

@@ -48,7 +48,7 @@ export async function POST(req: Request) {
       if (nusmodsShareLink) {
         // Fetch schedule and workload in parallel since they use the same data source
         fetchPromises.push(
-          fetchNusModsSchedule(nusmodsShareLink, userId).then(result => { events = result; }),
+          fetchNusModsSchedule(nusmodsShareLink, userId, semester).then(result => { events = result; }),
           fetchNusModsWorkloads(nusmodsShareLink).then(result => { moduleWorkloads = result; })
         );
       } else {
