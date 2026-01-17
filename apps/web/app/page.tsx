@@ -5,6 +5,7 @@ import { postJSON } from "@/lib/api";
 import { parseNusmodsShareLink } from "@/lib/nusmods";
 import { pickNextTask, RightNowTask } from "@/lib/rightNow";
 import { Avatar } from "./components/Avatar";
+import { useMemo, useState } from "react";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -16,6 +17,12 @@ export default function Home() {
   const [skippedTaskIds, setSkippedTaskIds] = useState<Set<string>>(new Set());
 
   const [currentTask, setCurrentTask] = useState<RightNowTask | null>(null);
+
+  // Done / skipped tracking (client-side)
+  const [doneTaskIds, setDoneTaskIds] = useState<Set<string>>(new Set());
+  const [skippedTaskIds, setSkippedTaskIds] = useState<Set<string>>(new Set());
+
+  // ===== Chat =====
   const [messages, setMessages] = useState<Msg[]>([
     { role: "assistant", content: "Hey! I'm your study buddy. What are we doing today?" },
   ]);
@@ -31,6 +38,7 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // ===== Connect/Sync =====
   const [connectOpen, setConnectOpen] = useState(false);
   const [canvasToken, setCanvasToken] = useState("");
   const [nusmodsShareLink, setNusmodsShareLink] = useState("");
@@ -38,6 +46,7 @@ export default function Home() {
 
   const canSend = useMemo(() => input.trim().length > 0 && !sending, [input, sending]);
 
+  // ===== Schedule widget =====
   const [upcomingClasses, setUpcomingClasses] = useState<any[]>([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
   const [loadingNext, setLoadingNext] = useState(false);
@@ -72,6 +81,16 @@ export default function Home() {
   }
 
   // Choose next task deterministically with done/skip filtering + fallback
+      dueAtMs: startAtMs,
+      importance: 3,
+      estimatedHours: 0.5,
+      difficulty: 2,
+    };
+  }
+
+  // ---------------------------
+  // Choose next task deterministically with done/skip filtering + fallback
+  // ---------------------------
   function chooseNextTask(opts?: { avoidId?: string }) {
     const avoidId = opts?.avoidId;
 
@@ -100,10 +119,12 @@ export default function Home() {
       if (fallback) return fallback;
     }
 
-    return pickNextTask(canvas2, sched2);
+    return pickNextTask(canvas2, sched2, { energy: 3 });
   }
 
+  // ---------------------------
   // Right Now: Prompt / Finish / Skip
+  // ---------------------------
   function promptRightNow() {
     setLoadingNext(true);
     try {
@@ -126,34 +147,58 @@ export default function Home() {
   }
 
   function handleFinish() {
-    if (!currentTask) return;
+  if (!currentTask) return;
 
-    const finished = currentTask;
+  const finished = currentTask;
 
-    // mark done
-    setDoneTaskIds((prev) => {
-      const next = new Set(prev);
-      next.add(finished.id);
-      return next;
-    });
+  // mark done
+  setDoneTaskIds((prev) => {
+    const next = new Set(prev);
+    next.add(finished.id);
+    return next;
+  });
 
-    const nextTask = chooseNextTask({ avoidId: finished.id });
-    setCurrentTask(nextTask);
+  const nextTask = chooseNextTask({ avoidId: finished.id });
+  setCurrentTask(nextTask);
 
-    setMessages((m) => [
-      ...m,
-      { role: "user", content: `✅ Finished: ${finished.title}` },
-      { role: "assistant", content: `✅ Done: ${finished.title}` },
-      ...(nextTask
-        ? [{ role: "assistant" as const, content: `Next: ${nextTask.title} (source: ${nextTask.source})` }]
-        : [{ role: "assistant" as const, content: "No next task right now — sync or add tasks." }]),
-    ]);
-  }
+  setMessages((m) => [
+    ...m,
+    { role: "user", content: `✅ Finished: ${finished.title}` },
+    { role: "assistant", content: `✅ Done: ${finished.title}` },
+    ...(nextTask
+      ? [{ role: "assistant" as const, content: `Next: ${nextTask.title} (source: ${nextTask.source})` }]
+      : [{ role: "assistant" as const, content: "No next task right now — sync or add tasks." }]),
+  ]);
+}
 
-  function handleSkip() {
-    if (!currentTask) return;
+function handleSkip() {
+  if (!currentTask) return;
 
-    const skipped = currentTask;
+  const skipped = currentTask;
+
+  // mark skipped
+  setSkippedTaskIds((prev) => {
+    const next = new Set(prev);
+    next.add(skipped.id);
+    return next;
+  });
+
+  const nextTask = chooseNextTask({ avoidId: skipped.id });
+  setCurrentTask(nextTask);
+
+  setMessages((m) => [
+    ...m,
+    { role: "user", content: `⏭️ Skip: ${skipped.title}` },
+    ...(nextTask
+      ? [
+          {
+            role: "assistant" as const,
+            content: `⏭️ Skipped. Try this instead: ${nextTask.title} (source: ${nextTask.source})`,
+          },
+        ]
+      : [{ role: "assistant" as const, content: "Nothing else to suggest yet — sync first." }]),
+  ]);
+}
 
     // mark skipped
     setSkippedTaskIds((prev) => {
@@ -179,6 +224,9 @@ export default function Home() {
     ]);
   }
 
+  // ---------------------------
+  // Chat send
+  // ---------------------------
   async function send() {
     if (!canSend) return;
 
@@ -210,6 +258,7 @@ export default function Home() {
         audio.play().catch(() => {
           setIsAudioPlaying(false);
         });
+        audio.play().catch(() => {});
       }
     } catch (e: any) {
       setMessages((m) => [...m, { role: "assistant", content: `Error: ${e.message}` }]);
@@ -218,6 +267,9 @@ export default function Home() {
     }
   }
 
+  // ---------------------------
+  // Sync
+  // ---------------------------
   async function sync() {
     let codes: string[] = [];
     try {
@@ -249,6 +301,10 @@ export default function Home() {
         title: a.title ?? a.name ?? "Canvas task",
         source: "canvas" as const,
         urgency: 5,
+        dueAtMs: a.dueDate ? new Date(a.dueDate).getTime() : undefined,
+        importance: 3,
+        estimatedHours: 1,
+        difficulty: 3,
       }));
 
       setCanvasTasks(ct);
@@ -266,6 +322,9 @@ export default function Home() {
     }
   }
 
+  // ---------------------------
+  // Schedule refresh
+  // ---------------------------
   async function refreshUpcomingClasses(linkOverride?: string) {
     const link = linkOverride ?? nusmodsShareLink;
     if (!link) {
@@ -289,8 +348,12 @@ export default function Home() {
       const st: RightNowTask[] = items.map((c: any, idx: number) => ({
         id: `schedule:${c.moduleCode ?? idx}:${c.lessonType ?? ""}:${c.classNo ?? ""}`,
         title: `Prep: ${c.moduleCode} ${c.lessonType} (${c.classNo})`,
-        source: "schedule" as const,
         urgency: 3,
+        source: "schedule" as const,
+        dueAtMs: c.startAtMs ?? undefined,
+        importance: 2,
+        estimatedHours: 0.5,
+        difficulty: 2,
       }));
       setScheduleTasks(st);
     } catch (e: any) {
@@ -366,8 +429,9 @@ export default function Home() {
           />
 
           <button
-            className={`rounded-lg border border-white/10 px-3 py-2 hover:bg-white/10 ${useTTS ? "bg-white/10" : ""
-              }`}
+            className={`rounded-lg border border-white/10 px-3 py-2 hover:bg-white/10 ${
+              useTTS ? "bg-white/10" : ""
+            }`}
             onClick={() => setUseTTS(!useTTS)}
             title="Enable text-to-speech"
             type="button"
