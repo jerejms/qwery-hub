@@ -9,15 +9,18 @@ import { Avatar } from "./components/Avatar";
 type Msg = { role: "user" | "assistant"; content: string };
 
 export default function Home() {
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  // ===== Kernel task pools =====
   const [canvasTasks, setCanvasTasks] = useState<RightNowTask[]>([]);
   const [scheduleTasks, setScheduleTasks] = useState<RightNowTask[]>([]);
+  const [currentTask, setCurrentTask] = useState<RightNowTask | null>(null);
+
+  // Done / skipped tracking (client-side)
   const [doneTaskIds, setDoneTaskIds] = useState<Set<string>>(new Set());
   const [skippedTaskIds, setSkippedTaskIds] = useState<Set<string>>(new Set());
 
-  const [currentTask, setCurrentTask] = useState<RightNowTask | null>(null);
+  // ===== Chat =====
   const [messages, setMessages] = useState<Msg[]>([
-    { role: "assistant", content: "Hey! I'm your study buddy. What are we doing today?" },
+    { role: "assistant", content: "Hey! I’m your study buddy. What are we doing today?" },
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -31,6 +34,7 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // ===== Connect/Sync =====
   const [connectOpen, setConnectOpen] = useState(false);
   const [canvasToken, setCanvasToken] = useState("");
   const [nusmodsShareLink, setNusmodsShareLink] = useState("");
@@ -38,11 +42,16 @@ export default function Home() {
 
   const canSend = useMemo(() => input.trim().length > 0 && !sending, [input, sending]);
 
+  // ===== Schedule widget =====
   const [upcomingClasses, setUpcomingClasses] = useState<any[]>([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
+
+  // ===== Right Now =====
   const [loadingNext, setLoadingNext] = useState(false);
 
+  // ---------------------------
   // Fallback: if no Canvas assignments, study 30 min for a lecture module
+  // ---------------------------
   function buildFallbackStudyTask(): RightNowTask | null {
     if (!upcomingClasses || upcomingClasses.length === 0) return null;
 
@@ -71,7 +80,9 @@ export default function Home() {
     };
   }
 
+  // ---------------------------
   // Choose next task deterministically with done/skip filtering + fallback
+  // ---------------------------
   function chooseNextTask(opts?: { avoidId?: string }) {
     const avoidId = opts?.avoidId;
 
@@ -103,96 +114,23 @@ export default function Home() {
     return pickNextTask(canvas2, sched2);
   }
 
-  // Right Now: Prompt / Finish / Skip
-  function promptRightNow() {
-    setLoadingNext(true);
-    try {
-      const chosen = chooseNextTask();
-      setCurrentTask(chosen);
-
-      setMessages((m) => [
-        ...m,
-        { role: "user", content: "What should I work on right now?" },
-        {
-          role: "assistant",
-          content: chosen
-            ? `Right now: ${chosen.title} (source: ${chosen.source})`
-            : "I don't have any tasks yet — sync Canvas/NUSMods first.",
-        },
-      ]);
-    } finally {
-      setLoadingNext(false);
-    }
-  }
-
-  function handleFinish() {
-    if (!currentTask) return;
-
-    const finished = currentTask;
-
-    // mark done
-    setDoneTaskIds((prev) => {
-      const next = new Set(prev);
-      next.add(finished.id);
-      return next;
-    });
-
-    const nextTask = chooseNextTask({ avoidId: finished.id });
-    setCurrentTask(nextTask);
-
-    setMessages((m) => [
-      ...m,
-      { role: "user", content: `✅ Finished: ${finished.title}` },
-      { role: "assistant", content: `✅ Done: ${finished.title}` },
-      ...(nextTask
-        ? [{ role: "assistant" as const, content: `Next: ${nextTask.title} (source: ${nextTask.source})` }]
-        : [{ role: "assistant" as const, content: "No next task right now — sync or add tasks." }]),
-    ]);
-  }
-
-  function handleSkip() {
-    if (!currentTask) return;
-
-    const skipped = currentTask;
-
-    // mark skipped
-    setSkippedTaskIds((prev) => {
-      const next = new Set(prev);
-      next.add(skipped.id);
-      return next;
-    });
-
-    const nextTask = chooseNextTask({ avoidId: skipped.id });
-    setCurrentTask(nextTask);
-
-    setMessages((m) => [
-      ...m,
-      { role: "user", content: `⏭️ Skip: ${skipped.title}` },
-      ...(nextTask
-        ? [
-          {
-            role: "assistant" as const,
-            content: `⏭️ Skipped. Try this instead: ${nextTask.title} (source: ${nextTask.source})`,
-          },
-        ]
-        : [{ role: "assistant" as const, content: "Nothing else to suggest yet — sync first." }]),
-    ]);
-  }
-
-  async function send() {
-    if (!canSend) return;
-
-    const text = input.trim();
-    setInput("");
-    setMessages((m) => [...m, { role: "user", content: text }]);
+  // ---------------------------
+  // Helper: Send message to LLM
+  // ---------------------------
+  async function sendToLLM(userMessage: string, context?: any, addUserMessage = true) {
     setSending(true);
+
+    if (addUserMessage) {
+      setMessages((m) => [...m, { role: "user", content: userMessage }]);
+    }
 
     try {
       const data = await postJSON<{ reply: string; audioUrl?: string | null }>("/api/chat", {
-        message: text,
+        message: userMessage,
         canvasToken: canvasToken || undefined,
         nusmodsShareLink: nusmodsShareLink || undefined,
         useTTS,
+        context: context || {},
       });
 
       await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 700));
@@ -211,13 +149,125 @@ export default function Home() {
           setIsAudioPlaying(false);
         });
       }
+
+      return data.reply;
     } catch (e: any) {
-      setMessages((m) => [...m, { role: "assistant", content: `Error: ${e.message}` }]);
+      const errorMsg = `Error: ${e.message}`;
+      setMessages((m) => [...m, { role: "assistant", content: errorMsg }]);
+      return null;
     } finally {
       setSending(false);
     }
   }
 
+  // ---------------------------
+  // Right Now: Prompt / Finish / Skip
+  // ---------------------------
+  async function promptRightNow() {
+    setLoadingNext(true);
+    try {
+      const chosen = chooseNextTask();
+      setCurrentTask(chosen);
+
+      // Build context for LLM
+      const context = {
+        action: "prompt_task",
+        currentTask: chosen,
+        availableTasks: {
+          canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length,
+          schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id)).length,
+        },
+      };
+
+      await sendToLLM("What should I work on right now?", context);
+    } finally {
+      setLoadingNext(false);
+    }
+  }
+
+  async function handleFinish() {
+    if (!currentTask) return;
+
+    const finished = currentTask;
+
+    // mark done
+    setDoneTaskIds((prev) => {
+      const next = new Set(prev);
+      next.add(finished.id);
+      return next;
+    });
+
+    const nextTask = chooseNextTask({ avoidId: finished.id });
+    setCurrentTask(nextTask);
+
+    // Build context for LLM
+    const context = {
+      action: "finish_task",
+      finishedTask: finished,
+      nextTask: nextTask,
+      remainingTasks: {
+        canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id) && t.id !== finished.id).length,
+        schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id) && t.id !== finished.id).length,
+      },
+    };
+
+    await sendToLLM(`I just finished: ${finished.title}`, context);
+  }
+
+  async function handleSkip() {
+    if (!currentTask) return;
+
+    const skipped = currentTask;
+
+    // mark skipped
+    setSkippedTaskIds((prev) => {
+      const next = new Set(prev);
+      next.add(skipped.id);
+      return next;
+    });
+
+    const nextTask = chooseNextTask({ avoidId: skipped.id });
+    setCurrentTask(nextTask);
+
+    // Build context for LLM
+    const context = {
+      action: "skip_task",
+      skippedTask: skipped,
+      nextTask: nextTask,
+      availableTasks: {
+        canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id) && !skippedTaskIds.has(t.id) && t.id !== skipped.id).length,
+        schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id) && !skippedTaskIds.has(t.id) && t.id !== skipped.id).length,
+      },
+    };
+
+    await sendToLLM(`I want to skip: ${skipped.title}`, context);
+  }
+
+
+  // ---------------------------
+  // Chat send
+  // ---------------------------
+  async function send() {
+    if (!canSend) return;
+
+    const text = input.trim();
+    setInput("");
+
+    // Send to LLM with current task context
+    const context = {
+      currentTask: currentTask,
+      availableTasks: {
+        canvas: canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length,
+        schedule: scheduleTasks.filter((t) => !doneTaskIds.has(t.id)).length,
+      },
+    };
+
+    await sendToLLM(text, context, true);
+  }
+
+  // ---------------------------
+  // Sync
+  // ---------------------------
   async function sync() {
     let codes: string[] = [];
     try {
@@ -266,6 +316,9 @@ export default function Home() {
     }
   }
 
+  // ---------------------------
+  // Schedule refresh
+  // ---------------------------
   async function refreshUpcomingClasses(linkOverride?: string) {
     const link = linkOverride ?? nusmodsShareLink;
     if (!link) {
@@ -300,13 +353,10 @@ export default function Home() {
       setLoadingSchedule(false);
     }
   }
-  const themeClasses = theme === 'dark' 
-    ? "bg-[#0a0a0a] text-white border-white/10" 
-    : "bg-white text-slate-900 border-slate-200";
 
-  const cardClasses = theme === 'dark'
-    ? "bg-white/[0.03] border-white/10"
-    : "bg-slate-50 border-slate-200 shadow-sm";
+  // ---------------------------
+  // UI
+  // ---------------------------
   return (
     <div className="min-h-screen flex bg-black text-white">
       {/* LEFT: CHAT */}
@@ -386,117 +436,91 @@ export default function Home() {
       </main>
 
       {/* RIGHT: WIDGETS */}
-      <aside className="w-96 p-6 flex flex-col gap-6 bg-[#0a0a0a]">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight">Activity</h2>
-          <div className="mt-1 flex items-center gap-2 text-xs">
-             <span className={`h-2 w-2 rounded-full ${syncStatus.includes('✅') ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`}></span>
-             <span className="opacity-60">{syncStatus}</span>
-          </div>
-        </div>
+      <aside className="w-80 p-4">
+        <h2 className="text-lg font-semibold">Widgets</h2>
+        <div className="mt-3 text-sm opacity-70">{syncStatus}</div>
 
-        <div className="space-y-6 overflow-auto pr-2 custom-scrollbar">
-          {/* RIGHT NOW FOCUS CARD */}
-          <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.05] to-transparent p-5">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-xs font-bold uppercase tracking-widest text-white/40">Current Focus</span>
-              <div className="flex gap-1">
-                <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-bold">
-                  {canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length} Left
-                </span>
-              </div>
+        <div className="mt-4 space-y-3">
+          {/* RIGHT NOW */}
+          <div className="space-y-3 rounded-lg border border-white/10 p-3">
+            <div className="font-medium">Right Now</div>
+            <div className="text-xs opacity-70">
+              canvas: {canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length} • schedule:{" "}
+              {scheduleTasks.filter((t) => !doneTaskIds.has(t.id)).length}
             </div>
 
-            {currentTask ? (
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-lg font-semibold leading-tight text-white">{currentTask.title}</h3>
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 uppercase">
-                      {currentTask.source}
-                    </span>
-                    {currentTask.dueAtMs && (
-                      <span className="text-[10px] text-orange-400">
-                         Due Soon
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <button
-                    onClick={handleFinish}
-                    className="flex-1 rounded-xl bg-white text-black py-2.5 text-sm font-bold hover:bg-white/90 transition-all active:scale-95"
-                  >
-                    Complete
-                  </button>
-                  <button
-                    onClick={handleSkip}
-                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium hover:bg-white/10 transition-all"
-                    title="Skip Task"
-                  >
-                    ⏭️
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="py-4 text-center">
-                <p className="text-sm text-white/40 mb-4">Ready to start your session?</p>
-                <button
-                  onClick={promptRightNow}
-                  disabled={loadingNext}
-                  className="w-full rounded-xl border border-dashed border-white/20 py-4 text-sm font-medium hover:bg-white/5 hover:border-white/40 transition-all"
-                >
-                  {loadingNext ? "Finding best task..." : "+ Get Next Task"}
-                </button>
-              </div>
-            )}
-          </section>
-
-          {/* SCHEDULE SECTION */}
-          <section className="space-y-4">
-            <div className="flex items-center justify-between px-1">
-              <h3 className="text-sm font-bold text-white/80 uppercase tracking-wider">Schedule</h3>
+            <div className="flex gap-2">
               <button
-                className="text-[10px] text-blue-400 hover:underline flex items-center gap-1"
-                onClick={() => refreshUpcomingClasses()}
+                onClick={promptRightNow}
+                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50"
+                disabled={loadingNext}
               >
-                {loadingSchedule ? "Refreshing..." : "↻ Refresh"}
+                {loadingNext ? "..." : "Prompt"}
+              </button>
+
+              <button
+                onClick={handleFinish}
+                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-40"
+                disabled={!currentTask}
+              >
+                Finish
+              </button>
+
+              <button
+                onClick={handleSkip}
+                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-40"
+                disabled={!currentTask}
+              >
+                Skip
               </button>
             </div>
 
-            <div className="space-y-3">
-              {!nusmodsShareLink ? (
-                <div className="rounded-xl border border-dashed border-white/10 p-4 text-center text-xs opacity-40">
-                  Connect NUSMods to view schedule
-                </div>
-              ) : upcomingClasses.length === 0 ? (
-                <div className="rounded-xl bg-green-500/5 border border-green-500/10 p-4 text-center">
-                   <p className="text-sm text-green-400 font-medium">Clear Schedule! 🎉</p>
-                </div>
+            <div className="text-sm text-white/80">
+              {currentTask ? (
+                <>
+                  <div className="font-semibold">{currentTask.title}</div>
+                  <div className="text-xs opacity-70">Source: {currentTask.source}</div>
+                </>
               ) : (
-                upcomingClasses.map((c, idx) => (
-                  <div 
-                    key={idx} 
-                    className="group relative flex gap-4 rounded-xl border border-white/[0.03] bg-white/[0.02] p-3 hover:bg-white/[0.05] transition-colors"
-                  >
-                    <div className="flex flex-col items-center justify-center border-r border-white/10 pr-3 min-w-[50px]">
-                       <span className="text-[10px] font-bold uppercase text-white/40">{c.day?.substring(0,3)}</span>
-                       <span className="text-sm font-bold">{c.startTime?.split(':')[0]}</span>
-                    </div>
-                    <div className="flex-1">
-                      <div className="text-sm font-bold group-hover:text-blue-400 transition-colors">
-                        {c.moduleCode}
-                      </div>
-                      <div className="text-[11px] text-white/50 leading-tight mt-0.5">
-                        {c.lessonType} • {c.venue || "No Venue"}
-                      </div>
-                    </div>
-                  </div>
-                ))
+                <div className="opacity-70">No recommendation yet. Sync then Prompt.</div>
               )}
             </div>
-          </section>
+          </div>
+
+          {/* SCHEDULE */}
+          <div className="rounded-lg border border-white/10 p-3">
+            <div className="flex items-center justify-between">
+              <div className="font-medium">Schedule</div>
+              <button
+                className="text-xs opacity-70 hover:opacity-100"
+                onClick={() => refreshUpcomingClasses()}
+              >
+                {loadingSchedule ? "..." : "Refresh"}
+              </button>
+            </div>
+
+            {!nusmodsShareLink ? (
+              <div className="text-sm opacity-60 mt-2">Sync NUSMods first to see your classes.</div>
+            ) : upcomingClasses?.[0]?.error ? (
+              <div className="text-sm text-red-300 mt-2">{upcomingClasses[0].error}</div>
+            ) : upcomingClasses.length === 0 ? (
+              <div className="text-sm opacity-60 mt-2">No classes in the next 3 days 🎉</div>
+            ) : (
+              <div className="mt-2 space-y-2 text-sm">
+                {upcomingClasses.map((c, idx) => (
+                  <div key={idx} className="rounded-md border border-white/10 p-2">
+                    <div className="font-semibold">
+                      {c.moduleCode} {c.lessonType} ({c.classNo})
+                    </div>
+                    <div className="opacity-80">
+                      {c.day} {c.startTime}–{c.endTime}
+                    </div>
+                    {c.venue && <div className="opacity-80">{c.venue}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </aside>
 
@@ -537,7 +561,7 @@ export default function Home() {
               </div>
 
               <div className="text-xs opacity-60 pt-2">
-                After syncing, click <span className="font-semibold">Prompt</span>. Finish marks tasks as done; Skip gives another task. If no Canvas tasks, you'll get a 30-min lecture study task.
+                After syncing, click <span className="font-semibold">Prompt</span>. Finish marks tasks as done; Skip gives another task. If no Canvas tasks, you’ll get a 30-min lecture study task.
               </div>
             </div>
           </div>
