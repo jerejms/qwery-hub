@@ -22,6 +22,10 @@ export default function Home() {
 
   const canSend = useMemo(() => input.trim().length > 0 && !sending, [input, sending]);
 
+  const [nextClass, setNextClass] = useState<any>(null);
+  const [loadingNext, setLoadingNext] = useState(false);
+
+
   async function send() {
     if (!canSend) return;
 
@@ -63,11 +67,33 @@ export default function Home() {
       setSyncStatus(
         `Synced ✅ Canvas tasks: ${data.tasksCount}, Modules: ${data.modulesCount}`
       );
+      await refreshNextClass(nusmodsShareLink);
       setConnectOpen(false);
     } catch (e: any) {
       setSyncStatus(`Sync failed ❌ ${e.message}`);
     }
   }
+  async function refreshNextClass(linkOverride?: string) {
+    const link = linkOverride ?? nusmodsShareLink;
+    if (!link) {
+      setNextClass(null);
+      return;
+    }
+
+    setLoadingNext(true);
+    try {
+      const data = await postJSON<{ next: any }>("/api/schedule/next", {
+        nusmodsShareLink: link,
+        semester: 2,
+      });
+      setNextClass(data.next ?? null);
+    } catch (e: any) {
+      setNextClass({ error: e.message ?? "Failed to load next class" });
+    } finally {
+      setLoadingNext(false);
+    }
+  }
+  
 
   return (
     <div className="min-h-screen flex bg-black text-white">
@@ -130,10 +156,42 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-white/10 p-3">
-            <div className="font-medium">Schedule</div>
-            <div className="text-sm opacity-60">Next class reminder</div>
+                    <div className="rounded-lg border border-white/10 p-3">
+            <div className="flex items-center justify-between">
+              <div className="font-medium">Schedule</div>
+              <button
+                className="text-xs opacity-70 hover:opacity-100"
+                onClick={() => refreshNextClass()}
+              >
+                {loadingNext ? "..." : "Refresh"}
+              </button>
+            </div>
+
+            {!nusmodsShareLink ? (
+              <div className="text-sm opacity-60 mt-2">
+                Sync NUSMods first to see your next class.
+              </div>
+            ) : nextClass?.error ? (
+              <div className="text-sm text-red-300 mt-2">
+                {nextClass.error}
+              </div>
+            ) : !nextClass ? (
+              <div className="text-sm opacity-60 mt-2">
+                No upcoming classes 🎉
+              </div>
+            ) : (
+              <div className="mt-2 text-sm">
+                <div className="font-semibold">
+                  {nextClass.moduleCode} {nextClass.lessonType} ({nextClass.classNo})
+                </div>
+                <div className="opacity-80">
+                  {nextClass.day} {nextClass.startTime}–{nextClass.endTime}
+                </div>
+                {nextClass.venue && <div className="opacity-80">{nextClass.venue}</div>}
+              </div>
+            )}
           </div>
+
         </div>
       </aside>
 
