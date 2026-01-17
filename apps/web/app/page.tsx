@@ -1,5 +1,6 @@
 "use client";
 
+import { pickNextTask, RightNowTask } from "../lib/rightNow";
 import { useMemo, useState } from "react";
 import { postJSON } from "@/lib/api";
 import { parseNusmodsShareLink } from "@/lib/nusmods";
@@ -8,7 +9,12 @@ import { parseNusmodsShareLink } from "@/lib/nusmods";
 type Msg = { role: "user" | "assistant"; content: string };
 
 
+
 export default function Home() {
+  const [canvasTasks, setCanvasTasks] = useState<RightNowTask[]>([]);
+  const [scheduleTasks, setScheduleTasks] = useState<RightNowTask[]>([]);
+
+  const [currentTask, setCurrentTask] = useState<RightNowTask | null>(null);
   const [messages, setMessages] = useState<Msg[]>([
     { role: "assistant", content: "Hey! I’m your study buddy. What are we doing today?" },
   ]);
@@ -23,8 +29,74 @@ export default function Home() {
 
   const canSend = useMemo(() => input.trim().length > 0 && !sending, [input, sending]);
 
-  const [nextClass, setNextClass] = useState<any>(null);
-  const [loadingNext, setLoadingNext] = useState(false);
+  const [upcomingClasses, setUpcomingClasses] = useState<any[]>([]);
+  const [loadingSchedule, setLoadingSchedule] = useState(false);
+
+
+
+  async function handlePrompt() {
+  setLoadingNext(true);
+
+  // 1️⃣ Collect tasks
+  const tasks = [...canvasTasks, ...scheduleTasks];
+
+  if (tasks.length === 0) {
+    setLoadingNext(false);
+    return;
+  }
+
+  // 2️⃣ Auto-prompt the AI (no UI input)
+  const aiPrompt = `
+You are a productivity assistant.
+
+Given the following tasks, choose EXACTLY ONE task the user should work on right now.
+
+Rules:
+- Choose the most urgent or important task
+- Prefer tasks with deadlines
+- Respond ONLY in JSON
+- No explanation text
+
+Tasks:
+${JSON.stringify(tasks, null, 2)}
+
+Return format:
+{
+  "id": string
+}
+`;
+
+  try {
+    const res = await postJSON<{ reply: string }>("/api/chat", {
+      messages: [{ role: "system", content: aiPrompt }],
+    });
+
+    // 3️⃣ Parse AI response
+    const parsed = JSON.parse(res.reply);
+    const chosen = tasks.find((t) => t.id === parsed.id);
+
+    // 4️⃣ Replace RIGHT NOW
+    if (chosen) {
+      setCurrentTask(chosen);
+    }
+  } catch (err) {
+    console.error("Failed to get AI task", err);
+  } finally {
+    setLoadingNext(false);
+  }
+}
+
+
+
+  async function handleFinish() {
+    setCurrentTask(null);
+    promptRightNow();
+  }
+
+  function handleSkip() {
+    handlePrompt();
+  }
+
 
 
   async function send() {
@@ -83,6 +155,45 @@ export default function Home() {
       setSending(false);
     }
   }
+  async function promptRightNow() {
+    if (sending) return;
+
+    const userPrompt = "Which task should I work on right now?";
+
+    // 1️⃣ Show the prompt in chat
+    setMessages((m) => [...m, { role: "user", content: userPrompt }]);
+    setSending(true);
+
+    try {
+      // 2️⃣ Ask the SAME AI assistant
+      const data = await postJSON<{ reply: string }>("/api/chat", {
+        message: userPrompt,
+        canvasToken: canvasToken || undefined,
+        nusmodsShareLink: nusmodsShareLink || undefined,
+      });
+
+      // 3️⃣ Show AI reply in chat
+      setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
+
+      // 4️⃣ Extract task from reply
+      const match = data.reply.match(/TASK:\s*(.+)/i);
+
+      if (match) {
+        setCurrentTask({
+          id: crypto.randomUUID(),
+          title: match[1],
+          source: "Canvas", // or "Schedule" if you want later
+        });
+      }
+    } catch (e: any) {
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: `Error: ${e.message}` },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  }
 
   async function sync() {
     let codes: string[] = [];
@@ -104,33 +215,36 @@ export default function Home() {
       setSyncStatus(
         `Synced ✅ Canvas tasks: ${data.tasksCount}, Modules: ${data.modulesCount}`
       );
-      await refreshNextClass(nusmodsShareLink);
+      await refreshUpcomingClasses(nusmodsShareLink);
       setConnectOpen(false);
     } catch (e: any) {
       setSyncStatus(`Sync failed ❌ ${e.message}`);
     }
   }
-  async function refreshNextClass(linkOverride?: string) {
+
+  async function refreshUpcomingClasses(linkOverride?: string) {
     const link = linkOverride ?? nusmodsShareLink;
     if (!link) {
-      setNextClass(null);
+      setUpcomingClasses([]);
       return;
     }
 
-    setLoadingNext(true);
+    setLoadingSchedule(true);
     try {
-      const data = await postJSON<{ next: any }>("/api/schedule/next", {
+      const data = await postJSON<{ items: any[] }>("/api/schedule/upcoming", {
         nusmodsShareLink: link,
         semester: 2,
+        days: 3,
       });
-      setNextClass(data.next ?? null);
+      setUpcomingClasses(data.items ?? []);
     } catch (e: any) {
-      setNextClass({ error: e.message ?? "Failed to load next class" });
+      setUpcomingClasses([{ error: e.message ?? "Failed to load schedule" }]);
     } finally {
-      setLoadingNext(false);
+      setLoadingSchedule(false);
     }
   }
 
+  
 
   return (
     <div className="min-h-screen flex bg-black text-white">
@@ -211,47 +325,86 @@ export default function Home() {
         <div className="mt-3 text-sm opacity-70">{syncStatus}</div>
 
         <div className="mt-4 space-y-3">
-          <div className="rounded-lg border border-white/10 p-3">
-            <div className="font-medium">Right Now</div>
-            <div className="text-sm opacity-60">
-              Shows what to do next (Canvas + Schedule)
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <button
+                onClick={promptRightNow}
+                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20"
+              >
+                Prompt
+              </button>
+
+              <button
+                onClick={handleFinish}
+                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20"
+                disabled={!currentTask}
+              >
+                Finish
+              </button>
+
+              <button
+                onClick={handleSkip}
+                className="px-3 py-1 rounded bg-white/10 hover:bg-white/20"
+                disabled={!currentTask}
+              >
+                Skip
+              </button>
+            </div>
+
+            <div className="text-sm text-white/80">
+              {currentTask ? (
+                <>
+                  <div className="font-semibold">{currentTask.title}</div>
+                  <div className="text-xs opacity-70">
+                    Source: {currentTask.source}
+                  </div>
+                </>
+              ) : (
+                "RIGHT NOW"
+              )}
             </div>
           </div>
 
-          <div className="rounded-lg border border-white/10 p-3">
+
+                    <div className="rounded-lg border border-white/10 p-3">
             <div className="flex items-center justify-between">
               <div className="font-medium">Schedule</div>
               <button
                 className="text-xs opacity-70 hover:opacity-100"
-                onClick={() => refreshNextClass()}
+                onClick={() => refreshUpcomingClasses()}
               >
-                {loadingNext ? "..." : "Refresh"}
+                {loadingSchedule ? "..." : "Refresh"}
               </button>
             </div>
 
             {!nusmodsShareLink ? (
               <div className="text-sm opacity-60 mt-2">
-                Sync NUSMods first to see your next class.
+                Sync NUSMods first to see your classes.
               </div>
-            ) : nextClass?.error ? (
+            ) : upcomingClasses?.[0]?.error ? (
               <div className="text-sm text-red-300 mt-2">
-                {nextClass.error}
+                {upcomingClasses[0].error}
               </div>
-            ) : !nextClass ? (
+            ) : upcomingClasses.length === 0 ? (
               <div className="text-sm opacity-60 mt-2">
-                No upcoming classes 🎉
+                No classes in the next 3 days 🎉
               </div>
             ) : (
-              <div className="mt-2 text-sm">
-                <div className="font-semibold">
-                  {nextClass.moduleCode} {nextClass.lessonType} ({nextClass.classNo})
-                </div>
-                <div className="opacity-80">
-                  {nextClass.day} {nextClass.startTime}–{nextClass.endTime}
-                </div>
-                {nextClass.venue && <div className="opacity-80">{nextClass.venue}</div>}
+              <div className="mt-2 space-y-2 text-sm">
+                {upcomingClasses.map((c, idx) => (
+                  <div key={idx} className="rounded-md border border-white/10 p-2">
+                    <div className="font-semibold">
+                      {c.moduleCode} {c.lessonType} ({c.classNo})
+                    </div>
+                    <div className="opacity-80">
+                      {c.day} {c.startTime}–{c.endTime}
+                    </div>
+                    {c.venue && <div className="opacity-80">{c.venue}</div>}
+                  </div>
+                ))}
               </div>
             )}
+
           </div>
 
         </div>
