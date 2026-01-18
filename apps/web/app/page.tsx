@@ -52,6 +52,11 @@ export default function Home() {
   const [useTTS, setUseTTS] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
+  // Debug: Log TTS state changes
+  useEffect(() => {
+    console.log("🔊 TTS State Changed:", useTTS);
+  }, [useTTS]);
+
   // Auto-scroll to bottom of chat
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -74,6 +79,98 @@ export default function Home() {
 
   // ===== Right Now =====
   const [loadingNext, setLoadingNext] = useState(false);
+
+  // ===== Break Timer System =====
+  const [consecutiveCompletions, setConsecutiveCompletions] = useState(0);
+  const [breakActive, setBreakActive] = useState(false);
+  const [breakTimeRemaining, setBreakTimeRemaining] = useState(600); // 10 minutes in seconds
+
+  // Break timer countdown
+  useEffect(() => {
+    if (!breakActive) return;
+
+    const interval = setInterval(() => {
+      setBreakTimeRemaining((prev) => {
+        if (prev <= 1) {
+          // Break time is over!
+          clearInterval(interval);
+          setBreakActive(false);
+          setBreakTimeRemaining(600);
+
+          // Alert user that break is over
+          if (typeof window !== "undefined") {
+            const audio = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZUQ0QVKzn77BdGQg+ltfzzH0pBSZ7yvDbkUELElyx6OqqVxYLRZ7i8L5tIgU2iM/z1YU1Bx5vwfDkmFAMD1Sm5/CxXhoIPJbY88t8KAUndsr03JFBCxFcr+ntq1kXC0Se4/C+bCIFN4nQ89WENgceb8Hw5JhQCw9Upufws18aCDuW2PPLfCgFJ3bK9NyRQQsRXK/o7ataFwtFnuPwvmwiBTeJ0PPVhDYHHm/B8OSYUAsPVKbn8LNfGgg7ltjzy3woBSd2yvTckUELEVyv6O+rWhcLRZ7j8L5sIgU3idDz1YQ2Bx5vwfDkmFALD1Sm5/CzXxoIO5bY88t8KAUndsr03JFBCxFcr+jvq1oXC0We4/C+bCIFN4nQ89WENgceb8Hw5JhQCw9Upufws18aCDuW2PPLfCgFJ3bK9NyRQQsRXK/o76taFwtFnuPwvmwiBTeJ0PPVhDYHHm/B8OSYUAsPVKbn8LNfGgg7ltjzy3woBSd2yvTckUELEVyv6O+rWhcLRZ7j8L5sIgU3idDz1YQ2Bx5vwfDkmFALD1Sm5/CzXxoIO5bY88t8KAUndsr03JFBCxFcr+jvq1oXC0We4/C+bCIFN4nQ89WENgceb8Hw5JhQCw9Upufws18aCDuW2PPLfCgFJ3bK9NyRQQsRXK/o76taFwtFnuPwvmwiBTeJ0PPVhDYHHm/B8OSYUAsPVKbn8LNfGgg7ltjzy3woBSd2yvTckUELEVyv6O+rWhcLRZ7j8L5sIgU3idDz1YQ2Bx5vwfDkmFALD1Sm5/CzXxoIO5bY88t8KAUndsr03JFBCxFcr+jvq1oXC0We4/C+bCIFN4nQ89WENgceb8Hw5JhQCw9Upufws18aCDuW2PPLfCgFJ3bK9NyRQQsRXK/o76taFwtFnuPwvmwiBTeJ0PPVhDYHHm/B8OSYUAsPVKbn8LNfGgg7ltjzy3woBSd2yvTckUELEVyv6O+rWhcLRZ7j8L5sIgU3idDz1YQ2Bx5vwfDkmFALD1Sm5/CzXxoIO5bY88t8KAUndsr03JFBCxFcr+jvq1oXC0We4/C+bCIFN4nQ89WENgceb8Hw5JhQCw9Upufws18aCDuW2PPLfCgFJ3bK9NyRQQsRXK/o76taFwtFnuPwvmwiBTeJ0PPVhDYHHm/B8OSYUAsPVKbn8LNfGgg7ltjzy3woBSd2yvTckUELEVyv6O+rWhcLRZ7j8L5sIgU3idDz1YQ2Bx5vwfDkmFALD1Sm5/CzXxoIO5bY88t8KAUndsr03JFBCxFcr+jvq1oXC0We4/C+");
+            audio.play().catch(() => { });
+            alert("Break time is over! Ready to get back to work? 💪");
+          }
+          return 600;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [breakActive]);
+
+  // ===== Mood System =====
+  // Calculate buddy mood based on urgent tasks and completion percentage
+  const calculateMood = (): "stressed" | "normal" | "happy" => {
+    const now = Date.now();
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+
+    // Calculate total tasks and completion percentage
+    const totalTasks = canvasTasks.length + scheduleTasks.length;
+    const completedTasks = doneTaskIds.size;
+    const completionPercentage = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+
+    // Get undone tasks due within 7 days
+    const urgentTasks = [...canvasTasks, ...scheduleTasks].filter((task) => {
+      if (doneTaskIds.has(task.id)) return false;
+      if (!task.dueAtMs) return false;
+      const timeUntilDue = task.dueAtMs - now;
+      return timeUntilDue > 0 && timeUntilDue <= sevenDaysMs;
+    });
+
+    const urgentCount = urgentTasks.length;
+    const totalUndone = canvasTasks.filter((t) => !doneTaskIds.has(t.id)).length +
+      scheduleTasks.filter((t) => !doneTaskIds.has(t.id)).length;
+
+    // Happy: Over 50% of all tasks completed (reward their progress!)
+    if (completionPercentage >= 50) {
+      return "happy";
+    }
+
+    // Stressed: 3+ urgent tasks OR 50%+ of remaining tasks are urgent
+    if (urgentCount >= 3 || (totalUndone > 0 && urgentCount / totalUndone >= 0.5)) {
+      return "stressed";
+    }
+
+    return "normal";
+  };
+
+  const buddyMood = calculateMood();
+
+  // Debug: Log mood changes
+  useEffect(() => {
+    const totalTasks = canvasTasks.length + scheduleTasks.length;
+    const completionPercentage = totalTasks > 0 ? ((doneTaskIds.size / totalTasks) * 100).toFixed(1) : 0;
+
+    const urgentTasks = [...canvasTasks, ...scheduleTasks].filter((task) => {
+      if (doneTaskIds.has(task.id)) return false;
+      if (!task.dueAtMs) return false;
+      const timeUntilDue = task.dueAtMs - Date.now();
+      return timeUntilDue > 0 && timeUntilDue <= 7 * 24 * 60 * 60 * 1000;
+    });
+
+    console.log("Mood System Status:", {
+      mood: buddyMood,
+      completionPercentage: `${completionPercentage}%`,
+      totalTasks: totalTasks,
+      doneCount: doneTaskIds.size,
+      urgentTasksCount: urgentTasks.length,
+      urgentTasks: urgentTasks.map(t => ({ title: t.title, dueAt: t.dueAtMs ? new Date(t.dueAtMs).toLocaleString() : 'No due date' }))
+    });
+  }, [buddyMood, canvasTasks, scheduleTasks, doneTaskIds]);
   const [rightNowBusy, setRightNowBusy] = useState(false);
 
 
@@ -242,6 +339,13 @@ export default function Home() {
   // Helper: Send message to LLM
   // ---------------------------
   async function sendToLLM(userMessage: string, context?: any, addUserMessage = true) {
+    console.log("🚀 sendToLLM called with:", {
+      userMessage: userMessage.substring(0, 50),
+      useTTS,
+      mood: buddyMood,
+      addUserMessage
+    });
+
     setSending(true);
 
     if (addUserMessage) {
@@ -249,19 +353,43 @@ export default function Home() {
     }
 
     try {
+      console.log("📡 Calling /api/chat with useTTS:", useTTS);
+
+      // Calculate completion percentage for encouraging near-milestone responses
+      const totalTasks = canvasTasks.length + scheduleTasks.length;
+      const completionPercentage = totalTasks > 0 ? (doneTaskIds.size / totalTasks) * 100 : 0;
+
       const data = await postJSON<{ reply: string; audioUrl?: string | null }>("/api/chat", {
         message: userMessage,
         canvasToken: canvasToken || undefined,
         nusmodsShareLink: nusmodsShareLink || undefined,
         useTTS,
         context: context || {},
+        mood: buddyMood,
+        completionPercentage: Math.round(completionPercentage),
+      });
+
+      console.log("📨 API Response received:", {
+        hasReply: !!data.reply,
+        hasAudioUrl: !!data.audioUrl,
+        audioUrlLength: data.audioUrl?.length
       });
 
       await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 700));
 
       setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
 
+      // Debug TTS
+      console.log("TTS Status:", {
+        useTTS,
+        hasAudioUrl: !!data.audioUrl,
+        audioUrlLength: data.audioUrl?.length,
+        audioUrlPrefix: data.audioUrl?.substring(0, 50)
+      });
+
       if (useTTS && data.audioUrl) {
+        console.log("✅ Playing TTS audio...");
+
         // Invalidate previous audio callbacks
         const token = ++audioTokenRef.current;
 
@@ -275,18 +403,24 @@ export default function Home() {
         audioRef.current = audio;
 
         audio.onplay = () => {
+          console.log("🔊 Audio started playing");
           if (audioTokenRef.current === token) setIsAudioPlaying(true);
         };
         audio.onended = () => {
+          console.log("✅ Audio finished");
           if (audioTokenRef.current === token) setIsAudioPlaying(false);
         };
-        audio.onerror = () => {
+        audio.onerror = (e) => {
+          console.error("❌ Audio error:", e, audio.error);
           if (audioTokenRef.current === token) setIsAudioPlaying(false);
         };
 
-        audio.play().catch(() => {
+        audio.play().catch((err) => {
+          console.error("❌ Audio play failed:", err);
           if (audioTokenRef.current === token) setIsAudioPlaying(false);
         });
+      } else if (useTTS && !data.audioUrl) {
+        console.warn("⚠️ TTS enabled but no audioUrl received from API");
       }
 
       return data.reply;
@@ -336,6 +470,17 @@ export default function Home() {
       const nextDone = new Set(doneTaskIds);
       nextDone.add(finished.id);
       setDoneTaskIds(nextDone);
+
+      // Track consecutive completions for break timer
+      const newCompletionCount = consecutiveCompletions + 1;
+      setConsecutiveCompletions(newCompletionCount);
+
+      // Trigger break after 3 consecutive completions
+      if (newCompletionCount >= 3) {
+        setBreakActive(true);
+        setBreakTimeRemaining(600); // Reset to 10 minutes
+        setConsecutiveCompletions(0); // Reset counter
+      }
 
       const nextTask = chooseNextTask({
         avoidId: finished.id,
@@ -399,9 +544,16 @@ export default function Home() {
   // Chat send
   // ---------------------------
   async function send() {
-    if (!canSend) return;
+    console.log("📤 Send button clicked! canSend:", canSend, "useTTS:", useTTS);
+
+    if (!canSend) {
+      console.log("❌ Cannot send - canSend is false");
+      return;
+    }
 
     const text = input.trim();
+    console.log("📝 Message text:", text);
+
     setInput("");
 
     const context = {
@@ -543,7 +695,7 @@ export default function Home() {
 
         {/* Avatar/Image at the top */}
         <div className="flex-1 relative overflow-hidden mt-4">
-          <Avatar isTalking={isAudioPlaying} />
+          <Avatar isTalking={isAudioPlaying} mood={buddyMood} />
         </div>
 
         {/* Chat messages container */}
@@ -863,6 +1015,65 @@ export default function Home() {
 
       {/* WELCOME OVERLAY */}
       <WelcomeOverlay isOpen={showWelcome} onClose={handleCloseWelcome} />
+
+      {/* BREAK TIMER OVERLAY */}
+      {breakActive && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md">
+          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-slate-950/90 backdrop-blur-xl p-8 text-center">
+            {/* Icon */}
+            <div className="mb-6 flex justify-center">
+              <div className="rounded-full bg-green-500/20 p-6">
+                <svg
+                  className="w-16 h-16 text-green-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+              </div>
+            </div>
+
+            {/* Title */}
+            <h2 className="text-3xl font-bold mb-3">Time for a Break! 🎉</h2>
+            <p className="text-white/70 mb-8">
+              You've completed 3 tasks in a row. Great work! Take a 10-minute break to recharge.
+            </p>
+
+            {/* Timer Display */}
+            <div className="mb-8">
+              <div className="text-7xl font-bold bg-gradient-to-r from-green-400 to-blue-400 bg-clip-text text-transparent">
+                {Math.floor(breakTimeRemaining / 60)}:{(breakTimeRemaining % 60).toString().padStart(2, "0")}
+              </div>
+              <div className="text-sm text-white/50 mt-2">minutes remaining</div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="mb-6 h-2 bg-white/10 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-green-400 to-blue-400 transition-all duration-1000 ease-linear"
+                style={{ width: `${((600 - breakTimeRemaining) / 600) * 100}%` }}
+              />
+            </div>
+
+            {/* Skip Break Button */}
+            <button
+              onClick={() => {
+                setBreakActive(false);
+                setBreakTimeRemaining(600);
+              }}
+              className="px-6 py-3 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 transition-colors"
+            >
+              Skip Break
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

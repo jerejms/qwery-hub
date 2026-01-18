@@ -17,6 +17,8 @@ export async function POST(req: Request) {
       useTTS,
       context,
       semester: semesterRaw,
+      mood,
+      completionPercentage,
     } = await req.json();
 
     if (!message) {
@@ -64,11 +66,11 @@ export async function POST(req: Request) {
       ragContext += `\n\nFRONTEND CONTEXT:\n${JSON.stringify(context, null, 2)}`;
     }
 
-    const assistantMessage = await llmService.chat(userId, message, ragContext);
+    const assistantMessage = await llmService.chat(userId, message, ragContext, mood, completionPercentage);
 
     let audioUrl: string | null = null;
     if (useTTS) {
-      audioUrl = await agoraService.generateTTS(assistantMessage);
+      audioUrl = await agoraService.generateTTS(assistantMessage, mood);
     }
 
     return NextResponse.json({ reply: assistantMessage, audioUrl });

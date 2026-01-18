@@ -30,7 +30,7 @@ class TTSService {
    * Generate TTS audio from text using ElevenLabs TTS API.
    * Returns a base64 data URL for the audio or null if it fails.
    */
-  async generateTTS(text: string): Promise<string | null> {
+  async generateTTS(text: string, mood: "normal" | "stressed" | "happy" = "normal"): Promise<string | null> {
     if (!this.enabled) {
       console.warn('TTS is not enabled. Please configure ELEVENLABS_API_KEY');
       return null;
@@ -41,13 +41,52 @@ class TTSService {
       return null;
     }
 
-    console.log(`TTS: Generating audio for text (${text.length} chars), voice: ${this.voiceId}, model: ${this.modelId}`);
+    console.log(`TTS: Generating audio for text (${text.length} chars), voice: ${this.voiceId}, model: ${this.modelId}, mood: ${mood}`);
 
-    // Add filler words to make speech more human-like (only in audio, not in text response)
-    const textWithFillers = this.addNaturalFillerWords(text);
+    // Add filler words based on mood (stressed = no fillers, normal/happy = fillers)
+    const textWithFillers = mood === "stressed" ? text : this.addNaturalFillerWords(text, mood);
 
     // Preprocess text to improve natural pauses using SSML break tags
-    const processedText = this.preprocessTextForNaturalPauses(textWithFillers);
+    const processedText = this.preprocessTextForNaturalPauses(textWithFillers, mood);
+
+    // Voice settings based on mood
+    let voiceSettings: any;
+    
+    switch (mood) {
+      case "stressed":
+        // Urgent, fast, direct - no pauses, high energy
+        voiceSettings = {
+          stability: 0.5,           // Lower stability for more urgent/frantic energy
+          similarity_boost: 0.8,    // Keep voice recognizable
+          style: 0.4,               // More expressive/emotional
+          use_speaker_boost: true,
+          speed: 1.2,               // Faster speech for urgency (max allowed by API)
+        };
+        break;
+      
+      case "happy":
+        // Relaxed, cheerful, friendly
+        voiceSettings = {
+          stability: 0.6,           // Slightly lower for more expression
+          similarity_boost: 0.75,
+          style: 0.2,               // Some style for happiness
+          use_speaker_boost: true,
+          speed: 0.95,              // Slightly slower, more relaxed
+        };
+        break;
+      
+      case "normal":
+      default:
+        // Balanced, natural
+        voiceSettings = {
+          stability: 0.7,           // Higher stability for consistent pacing
+          similarity_boost: 0.75,
+          style: 0.0,               // Natural, not robotic
+          use_speaker_boost: true,
+          speed: 1.0,               // Normal speed
+        };
+        break;
+    }
 
     try {
       const response = await fetch(
@@ -61,13 +100,7 @@ class TTSService {
           body: JSON.stringify({
             model_id: this.modelId,
             text: processedText,
-            voice_settings: {
-              stability: 0.7, // Higher stability for more consistent, natural pacing and pauses
-              similarity_boost: 0.75, // Good balance between similarity and naturalness
-              style: 0.0, // Lower style for more natural, less robotic sound
-              use_speaker_boost: true, // Enhances clarity and naturalness
-              speed: 1.0, // Normal speech speed (range: 0.7-1.2, 1.0 is normal)
-            },
+            voice_settings: voiceSettings,
             output_format: 'mp3_44100_128', // MP3 format for browser compatibility
           }),
         }
@@ -109,7 +142,7 @@ class TTSService {
    * These are only added to the audio, not to the displayed text
    * Different fillers have random pause durations within ranges for natural variation
    */
-  private addNaturalFillerWords(text: string): string {
+  private addNaturalFillerWords(text: string, mood: "normal" | "stressed" | "happy" = "normal"): string {
     // Filler words with their pause duration ranges (min, max in seconds)
     // "um" has longer pauses, "uh" has shorter pauses
     const fillerConfig: Record<string, { min: number; max: number }> = {
@@ -134,6 +167,10 @@ class TTSService {
     const fillers = Object.keys(fillerConfig);
     const sentences = text.split(/([.!?]+\s+)/);
 
+    // Adjust filler frequency based on mood
+    const fillerChanceAfterSentence = mood === "happy" ? 0.4 : 0.25; // More fillers when happy
+    const fillerChanceAfterComma = mood === "happy" ? 0.2 : 0.12;    // More fillers when happy
+
     let result = '';
 
     for (let i = 0; i < sentences.length; i++) {
@@ -144,8 +181,8 @@ class TTSService {
 
       // Occasionally add a filler word after sentences (not every time)
       if (sentence.trim().length > 0 && /[.!?]/.test(sentence)) {
-        // Add filler ~30% of the time after sentences
-        if (Math.random() < 0.3 && i < sentences.length - 1) {
+        // Add filler based on mood frequency
+        if (Math.random() < fillerChanceAfterSentence && i < sentences.length - 1) {
           const filler = fillers[Math.floor(Math.random() * fillers.length)];
           const pauseDuration = getRandomPause(filler);
           // Add filler with SSML break tag for the pause
@@ -156,7 +193,7 @@ class TTSService {
 
     // Also occasionally add fillers after commas in longer sentences
     result = result.replace(/,(\s+)([A-Z])/g, (match, space, nextChar) => {
-      if (Math.random() < 0.15) { // 15% chance
+      if (Math.random() < fillerChanceAfterComma) {
         // Use shorter fillers after commas (um, uh, well)
         const shortFillers = ['um', 'uh', 'well'];
         const filler = shortFillers[Math.floor(Math.random() * shortFillers.length)];
@@ -174,16 +211,43 @@ class TTSService {
    * Preprocess text to add natural pauses using SSML break tags
    * For V2 models like eleven_multilingual_v2, SSML break tags are supported
    */
-  private preprocessTextForNaturalPauses(text: string): string {
+  private preprocessTextForNaturalPauses(text: string, mood: "normal" | "stressed" | "happy" = "normal"): string {
+    // Adjust pause durations based on mood
+    let sentencePause = "0.3s";
+    let commaPause = "0.2s";
+    let colonPause = "0.25s";
+    
+    switch (mood) {
+      case "stressed":
+        // Minimal pauses for urgency
+        sentencePause = "0.1s";
+        commaPause = "0.05s";
+        colonPause = "0.1s";
+        break;
+      case "happy":
+        // Longer, relaxed pauses
+        sentencePause = "0.4s";
+        commaPause = "0.25s";
+        colonPause = "0.3s";
+        break;
+      case "normal":
+      default:
+        // Default pauses
+        sentencePause = "0.3s";
+        commaPause = "0.2s";
+        colonPause = "0.25s";
+        break;
+    }
+    
     // Add small breaks after sentence-ending punctuation for more natural pauses
     // Replace periods, exclamation marks, question marks with break tags
     let processed = text
       // Add short break after sentence endings (but not abbreviations)
-      .replace(/([.!?])\s+/g, '$1 <break time="0.3s"/> ')
+      .replace(/([.!?])\s+/g, `$1 <break time="${sentencePause}"/> `)
       // Add very short break after commas
-      .replace(/,(\s+)/g, ', <break time="0.2s"/>$1')
+      .replace(/,(\s+)/g, `, <break time="${commaPause}"/>$1`)
       // Add break after colons (lists, explanations)
-      .replace(/:\s+/g, ': <break time="0.25s"/> ')
+      .replace(/:\s+/g, `: <break time="${colonPause}"/> `)
       // Clean up multiple spaces
       .replace(/\s+/g, ' ')
       .trim();
